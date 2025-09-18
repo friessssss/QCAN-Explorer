@@ -36,11 +36,14 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("QCAN Explorer - CAN Network Analysis Tool")
         self.setGeometry(100, 100, 1400, 900)
         
-        # Set window icon
+        # Set window icon and application properties
         try:
             icon = QIcon("logo.png")
             if not icon.isNull():
                 self.setWindowIcon(icon)
+                # Set application icon for macOS dock and taskbar
+                from PyQt6.QtWidgets import QApplication
+                QApplication.instance().setWindowIcon(icon)
         except Exception as e:
             print(f"Warning: Could not set window icon: {e}")
         

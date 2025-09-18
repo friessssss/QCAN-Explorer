@@ -24,7 +24,6 @@ class MessageTreeWidget(QTreeWidget):
         self.setup_tree()
         self.message_data = []  # Store message data
         self.message_stats = {}  # Track message statistics
-        self.sym_parser = None  # SYM parser for decoding
         self.message_items = {}  # Track tree items by message key (bus+ID)
         
     def setup_tree(self):
@@ -35,43 +34,61 @@ class MessageTreeWidget(QTreeWidget):
         self.setHeaderLabels(columns)
         
         # Set tree properties
-        self.setSortingEnabled(False)  # Disable sorting to maintain order
+        self.setSortingEnabled(True)  # Enable sorting by column headers
         self.setAlternatingRowColors(True)
         self.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
         self.setRootIsDecorated(True)
         
-        # Configure column widths
+        # Configure column widths - make all columns resizable by user
         header = self.header()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # Time
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)  # Bus
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # ID
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)  # DLC
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)  # Data
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)  # Direction
-        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)  # Count
-        header.setSectionResizeMode(7, QHeaderView.ResizeMode.Fixed)  # Period
-        header.setSectionResizeMode(8, QHeaderView.ResizeMode.Stretch)  # Message/Signal
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)  # Time - resizable
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)  # Bus - resizable
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)  # ID - resizable
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)  # DLC - resizable
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)  # Data - resizable
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Interactive)  # Direction - resizable
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Interactive)  # Count - resizable
+        header.setSectionResizeMode(7, QHeaderView.ResizeMode.Interactive)  # Period - resizable
+        header.setSectionResizeMode(8, QHeaderView.ResizeMode.Interactive)  # Message/Signal - resizable
         
-        self.setColumnWidth(1, 40)   # Bus
+        # Set initial column widths (user can resize these)
+        self.setColumnWidth(0, 120)  # Time
+        self.setColumnWidth(1, 50)   # Bus
+        self.setColumnWidth(2, 80)   # ID
         self.setColumnWidth(3, 50)   # DLC
+        self.setColumnWidth(4, 120)  # Data
         self.setColumnWidth(5, 80)   # Direction
         self.setColumnWidth(6, 60)   # Count
         self.setColumnWidth(7, 80)   # Period
+        self.setColumnWidth(8, 200)  # Message/Signal
+        
+        # Enable header click sorting
+        header.setSortIndicatorShown(True)
+        header.setSectionsClickable(True)
         
         # Set font
         font = QFont("Consolas", 9)
         self.setFont(font)
         
-    def set_sym_parser(self, parser):
-        """Set the SYM parser for message decoding"""
-        self.sym_parser = parser
+    def set_network_manager(self, network_manager):
+        """Set the network manager for accessing symbol parsers"""
+        self.network_manager = network_manager
         
-    def get_message_name(self, msg_id: int) -> str:
-        """Get message name from SYM parser"""
-        if not self.sym_parser or not self.sym_parser.messages:
+    def get_sym_parser_for_bus(self, bus_number: int):
+        """Get symbol parser for a specific bus number"""
+        if hasattr(self, 'network_manager') and self.network_manager:
+            network = self.network_manager.get_network_by_bus_number(bus_number)
+            if network:
+                return network.get_symbol_parser()
+        return None
+        
+    def get_message_name(self, msg_id: int, bus_number: int = 0) -> str:
+        """Get message name from network-assigned SYM parser"""
+        sym_parser = self.get_sym_parser_for_bus(bus_number)
+        if not sym_parser or not sym_parser.messages:
             return f"Unknown_0x{msg_id:X}"
         
-        for msg_name, msg_def in self.sym_parser.messages.items():
+        for msg_name, msg_def in sym_parser.messages.items():
             if msg_def.can_id == msg_id:
                 return msg_name
         
@@ -79,11 +96,12 @@ class MessageTreeWidget(QTreeWidget):
         
     def decode_message_signals(self, msg: CANMessage) -> List[tuple]:
         """Decode message into individual signal name-value pairs"""
-        if not self.sym_parser or not self.sym_parser.messages:
+        sym_parser = self.get_sym_parser_for_bus(msg.bus_number)
+        if not sym_parser or not sym_parser.messages:
             return []
         
         # Find matching message definition
-        for msg_name, msg_def in self.sym_parser.messages.items():
+        for msg_name, msg_def in sym_parser.messages.items():
             if msg_def.can_id == msg.arbitration_id:
                 signals = []
                 
@@ -113,8 +131,8 @@ class MessageTreeWidget(QTreeWidget):
                             unit_str = f" {var.unit}" if var.unit else ""
                             
                             # Handle enum values
-                            if var.enum_name and var.enum_name in self.sym_parser.enums:
-                                enum = self.sym_parser.enums[var.enum_name]
+                            if var.enum_name and sym_parser.enums and var.enum_name in sym_parser.enums:
+                                enum = sym_parser.enums[var.enum_name]
                                 if int(scaled_value) in enum.values:
                                     value_str = enum.values[int(scaled_value)]
                                 else:
@@ -168,12 +186,12 @@ class MessageTreeWidget(QTreeWidget):
         time_str = time.strftime("%H:%M:%S.%f", time.localtime(msg.timestamp))[:-3]
         item.setText(0, time_str)
         
-        # Bus number
+        # Bus number with color coding
         item.setText(1, str(msg.bus_number))
         if msg.bus_number > 0:
-            # Color code buses for easy identification
-            colors = [QColor(240, 240, 240), QColor(235, 235, 235), QColor(230, 230, 230), 
-                     QColor(245, 245, 245), QColor(225, 225, 225), QColor(250, 250, 250)]
+            # Color code buses for easy identification - vibrant but readable colors
+            colors = [QColor(255, 200, 200), QColor(200, 255, 200), QColor(200, 200, 255), 
+                     QColor(255, 255, 150), QColor(255, 150, 255), QColor(150, 255, 255)]
             color = colors[(msg.bus_number - 1) % len(colors)]
             item.setBackground(1, color)
         
@@ -205,7 +223,7 @@ class MessageTreeWidget(QTreeWidget):
         item.setText(7, period_str)
         
         # Message name in the Message/Signal column
-        message_name = self.get_message_name(msg.arbitration_id)
+        message_name = self.get_message_name(msg.arbitration_id, msg.bus_number)
         item.setText(8, message_name)
         
         # Update signal children only if the item doesn't have children yet
@@ -214,17 +232,17 @@ class MessageTreeWidget(QTreeWidget):
             signals = self.decode_message_signals(msg)
             for signal_name, signal_value in signals:
                 signal_item = QTreeWidgetItem(item)
-                signal_item.setText(7, f"{signal_name} = {signal_value}")
+                signal_item.setText(8, f"{signal_name} = {signal_value}")  # Column 8: Message/Signal
                 
                 # Set different styling for signal rows
-                signal_item.setForeground(7, QColor(100, 100, 100))  # Gray text
+                signal_item.setForeground(8, QColor(100, 100, 100))  # Gray text
         else:
             # Update existing signal children with new values
             signals = self.decode_message_signals(msg)
             for i, (signal_name, signal_value) in enumerate(signals):
                 if i < item.childCount():
                     child = item.child(i)
-                    child.setText(7, f"{signal_name} = {signal_value}")
+                    child.setText(8, f"{signal_name} = {signal_value}")  # Column 8: Message/Signal
             
     def clear_messages(self):
         """Clear all messages from the tree"""
@@ -242,7 +260,6 @@ class MessageTableWidget(QTableWidget):
         self.setup_table()
         self.message_data = []  # Store message data
         self.message_stats = {}  # Track message statistics
-        self.sym_parser = None  # SYM parser for decoding
         
     def setup_table(self):
         """Set up the message table"""
@@ -256,39 +273,57 @@ class MessageTableWidget(QTableWidget):
         self.setAlternatingRowColors(True)
         self.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         
-        # Configure column widths
+        # Configure column widths - make all columns resizable by user
         header = self.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # Time
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)  # Bus
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # ID
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)  # DLC
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)  # Data
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)  # Direction
-        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)  # Count
-        header.setSectionResizeMode(7, QHeaderView.ResizeMode.Fixed)  # Period
-        header.setSectionResizeMode(8, QHeaderView.ResizeMode.Stretch)  # Decoded Signals
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)  # Time - resizable
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)  # Bus - resizable
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)  # ID - resizable
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)  # DLC - resizable
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)  # Data - resizable
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Interactive)  # Direction - resizable
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Interactive)  # Count - resizable
+        header.setSectionResizeMode(7, QHeaderView.ResizeMode.Interactive)  # Period - resizable
+        header.setSectionResizeMode(8, QHeaderView.ResizeMode.Interactive)  # Decoded Signals - resizable
         
-        self.setColumnWidth(1, 40)   # Bus
+        # Set initial column widths (user can resize these)
+        self.setColumnWidth(0, 120)  # Time
+        self.setColumnWidth(1, 50)   # Bus
+        self.setColumnWidth(2, 80)   # ID
         self.setColumnWidth(3, 50)   # DLC
+        self.setColumnWidth(4, 120)  # Data
         self.setColumnWidth(5, 80)   # Direction
         self.setColumnWidth(6, 60)   # Count
         self.setColumnWidth(7, 80)   # Period
+        self.setColumnWidth(8, 200)  # Decoded Signals
+        
+        # Enable header click sorting
+        header.setSortIndicatorShown(True)
+        header.setSectionsClickable(True)
         
         # Set font
         font = QFont("Consolas", 9)
         self.setFont(font)
         
-    def set_sym_parser(self, parser: SymParser):
-        """Set the SYM parser for message decoding"""
-        self.sym_parser = parser
+    def set_network_manager(self, network_manager):
+        """Set the network manager for accessing symbol parsers"""
+        self.network_manager = network_manager
+        
+    def get_sym_parser_for_bus(self, bus_number: int):
+        """Get symbol parser for a specific bus number"""
+        if hasattr(self, 'network_manager') and self.network_manager:
+            network = self.network_manager.get_network_by_bus_number(bus_number)
+            if network:
+                return network.get_symbol_parser()
+        return None
         
     def decode_message(self, msg: CANMessage) -> str:
-        """Decode a CAN message using SYM file definitions"""
-        if not self.sym_parser or not self.sym_parser.messages:
-            return "No SYM file loaded"
+        """Decode a CAN message using network-assigned SYM file definitions"""
+        sym_parser = self.get_sym_parser_for_bus(msg.bus_number)
+        if not sym_parser or not sym_parser.messages:
+            return "No symbol file assigned to this bus"
         
         # Find matching message definition
-        for msg_name, msg_def in self.sym_parser.messages.items():
+        for msg_name, msg_def in sym_parser.messages.items():
             if msg_def.can_id == msg.arbitration_id:
                 decoded_lines = []
                 
@@ -318,8 +353,8 @@ class MessageTableWidget(QTableWidget):
                             unit_str = f" {var.unit}" if var.unit else ""
                             
                             # Handle enum values
-                            if var.enum_name and var.enum_name in self.sym_parser.enums:
-                                enum = self.sym_parser.enums[var.enum_name]
+                            if var.enum_name and sym_parser.enums and var.enum_name in sym_parser.enums:
+                                enum = sym_parser.enums[var.enum_name]
                                 if int(scaled_value) in enum.values:
                                     value_str = enum.values[int(scaled_value)]
                                 else:
@@ -378,9 +413,9 @@ class MessageTableWidget(QTableWidget):
         # Bus number
         bus_item = QTableWidgetItem(str(msg.bus_number))
         if msg.bus_number > 0:
-            # Color code buses for easy identification
-            colors = [QColor(240, 240, 240), QColor(235, 235, 235), QColor(230, 230, 230), 
-                     QColor(245, 245, 245), QColor(225, 225, 225), QColor(250, 250, 250)]
+            # Color code buses for easy identification - vibrant but readable colors
+            colors = [QColor(255, 200, 200), QColor(200, 255, 200), QColor(200, 200, 255), 
+                     QColor(255, 255, 150), QColor(255, 150, 255), QColor(150, 255, 255)]
             color = colors[(msg.bus_number - 1) % len(colors)]
             bus_item.setBackground(color)
         self.setItem(row, 1, bus_item)
@@ -488,30 +523,15 @@ class MonitorTab(QWidget):
         
         layout.addWidget(control_group)
         
-        # Symbol file panel
-        symbol_group = QGroupBox("Symbol File")
+        # Network symbol status
+        symbol_group = QGroupBox("Symbol Decoding Status")
         symbol_layout = QHBoxLayout(symbol_group)
         
-        self.load_sym_btn = QPushButton("Load SYM File")
-        self.load_sym_btn.clicked.connect(self.load_sym_file)
-        symbol_layout.addWidget(self.load_sym_btn)
-        
-        self.unload_sym_btn = QPushButton("Unload SYM")
-        self.unload_sym_btn.clicked.connect(self.unload_sym_file)
-        self.unload_sym_btn.setEnabled(False)
-        symbol_layout.addWidget(self.unload_sym_btn)
-        
-        symbol_layout.addWidget(QLabel("|"))  # Separator
-        
-        self.sym_file_label = QLabel("No SYM file loaded")
-        self.sym_file_label.setStyleSheet("color: #666666; font-style: italic;")
-        symbol_layout.addWidget(self.sym_file_label)
+        self.sym_status_label = QLabel("Using network-assigned symbol files")
+        self.sym_status_label.setStyleSheet("color: #666666; font-style: italic;")
+        symbol_layout.addWidget(self.sym_status_label)
         
         symbol_layout.addStretch()
-        
-        # SYM file stats
-        self.sym_stats_label = QLabel("")
-        symbol_layout.addWidget(self.sym_stats_label)
         
         layout.addWidget(symbol_group)
         
@@ -547,6 +567,7 @@ class MonitorTab(QWidget):
         
         # Message tree (expandable table)
         self.message_table = MessageTreeWidget()
+        self.message_table.set_network_manager(self.network_manager)
         self.message_table.itemSelectionChanged.connect(self.on_message_selected)
         splitter.addWidget(self.message_table)
         
@@ -591,6 +612,12 @@ class MonitorTab(QWidget):
         self.network_manager.message_received.connect(self.on_message_received, Qt.ConnectionType.QueuedConnection)
         self.network_manager.message_transmitted.connect(self.on_message_transmitted, Qt.ConnectionType.QueuedConnection)
         self.network_manager.network_state_changed.connect(self.on_network_state_changed, Qt.ConnectionType.QueuedConnection)
+        
+        # Update symbol status when networks change
+        self.network_manager.network_state_changed.connect(self.update_symbol_status, Qt.ConnectionType.QueuedConnection)
+        
+        # Initial symbol status update
+        self.update_symbol_status()
         
     @pyqtSlot(str, object)
     def on_message_received(self, network_id: str, msg: CANMessage):
@@ -822,68 +849,21 @@ Signal: {signal_info}
         self.tx_count_label.setText(f"TX: {tx_count}")
         self.unique_ids_label.setText(f"Unique IDs: {unique_ids}")
         
-    def set_sym_parser(self, parser: SymParser):
-        """Set the SYM parser for message decoding"""
-        self.message_table.set_sym_parser(parser)
+    def update_symbol_status(self):
+        """Update symbol file status based on network assignments"""
+        networks = self.network_manager.get_all_networks()
+        sym_files = []
         
-        # Update UI to reflect SYM file status
-        if parser:
-            self.sym_file_label.setText("SYM file loaded")
-            self.sym_file_label.setStyleSheet("color: #666666; font-weight: bold;")
-            self.load_sym_btn.setEnabled(False)
-            self.unload_sym_btn.setEnabled(True)
-            
-            # Update stats
-            msg_count = len(parser.messages) if parser.messages else 0
-            signal_count = len(parser.signals) if parser.signals else 0
-            self.sym_stats_label.setText(f"{msg_count} messages, {signal_count} signals")
-        else:
-            self.sym_file_label.setText("No SYM file loaded")
-            self.sym_file_label.setStyleSheet("color: #666666; font-style: italic;")
-            self.load_sym_btn.setEnabled(True)
-            self.unload_sym_btn.setEnabled(False)
-            self.sym_stats_label.setText("")
-            
-    def load_sym_file(self):
-        """Load SYM file for message decoding"""
-        filename, _ = QFileDialog.getOpenFileName(
-            self, "Load SYM File", "", "SYM Files (*.sym);;All Files (*)"
-        )
-        
-        if filename:
-            try:
+        for network in networks.values():
+            if network.config.symbol_file_path:
                 import os
-                from utils.sym_parser import SymParser
-                
-                # Load SYM file
-                parser = SymParser()
-                success = parser.parse_file(filename)
-                
-                if success:
-                    # Set parser and update UI
-                    self.set_sym_parser(parser)
-                    self.sym_file_label.setText(f"Loaded: {os.path.basename(filename)}")
-                    
-                    # Notify main window about the change (for other tabs)
-                    main_window = self.window()
-                    if hasattr(main_window, 'symbols_tab'):
-                        main_window.symbols_tab.sym_parser = parser
-                        main_window.symbols_tab.sym_parser_changed.emit(parser)
-                    
-                    QMessageBox.information(self, "Success", 
-                                          f"Loaded SYM file with {len(parser.messages)} messages")
-                else:
-                    QMessageBox.critical(self, "Error", "Failed to parse SYM file")
-                    
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to load SYM file: {str(e)}")
-                
-    def unload_sym_file(self):
-        """Unload current SYM file"""
-        self.set_sym_parser(None)
+                filename = os.path.basename(network.config.symbol_file_path)
+                sym_files.append(f"Bus {network.config.bus_number}: {filename}")
         
-        # Notify main window about the change (for other tabs)
-        main_window = self.window()
-        if hasattr(main_window, 'symbols_tab'):
-            main_window.symbols_tab.sym_parser = None
-            main_window.symbols_tab.sym_parser_changed.emit(None)
+        if sym_files:
+            status_text = "Symbol files: " + ", ".join(sym_files)
+            self.sym_status_label.setText(status_text)
+            self.sym_status_label.setStyleSheet("color: #666666; font-weight: bold;")
+        else:
+            self.sym_status_label.setText("Using network-assigned symbol files")
+            self.sym_status_label.setStyleSheet("color: #666666; font-style: italic;")
