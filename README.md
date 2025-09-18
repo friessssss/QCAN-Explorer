@@ -143,7 +143,8 @@ QCAN Explorer includes a built-in virtual CAN network for testing without hardwa
 - **Control Interface**: Virtual CAN tab for managing message generation
 - **Demo Script**: Run `python examples/demo_virtual_can.py` to see it in action
 
-### Virtual Message Types:
+### Virtual Message Types
+
 - `0x100`: Engine RPM, Load, Temperature, Throttle (500ms - 2Hz)
 - `0x101`: Vehicle Speed, Odometer (1000ms - 1Hz)
 - `0x200`: Door/Window Status, Lights (2000ms - 0.5Hz)
@@ -151,7 +152,8 @@ QCAN Explorer includes a built-in virtual CAN network for testing without hardwa
 - `0x400`: Climate Control (10000ms - 0.1Hz)
 - `0x7E0/0x7E8`: Diagnostic Messages (20000ms - 0.05Hz)
 
-### Rate Control Features:
+### Rate Control Features
+
 - **Speed Up (÷2)**: Double message rates by halving periods
 - **Slow Down (×2)**: Halve message rates by doubling periods
 - **Real-time Adjustment**: Change rates while virtual network is running
