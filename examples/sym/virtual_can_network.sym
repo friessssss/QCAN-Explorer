@@ -1,0 +1,73 @@
+FormatVersion=1.0
+Title="QCAN Explorer Virtual CAN Network"
+
+{ENUMS}
+Enum=EngineState(0="Stopped", 1="Starting", 2="Running", 3="Stopping")
+Enum=DoorState(0="Closed", 1="Open")
+Enum=LightState(0="Off", 1="On")
+Enum=FanSpeed(0="Off", 1="Low", 2="Medium", 3="High")
+Enum=SystemHealth(0="Critical", 1="Poor", 2="Fair", 3="Good", 4="Excellent")
+
+{SENDRECEIVE}
+
+[Engine_Data]
+ID=100h
+Len=8
+CycleTime=50
+Var=EngineRPM unsigned 0,16 /u:RPM /max:8000 // Engine revolutions per minute
+Var=EngineLoad unsigned 16,8 /u:% /max:100 // Engine load percentage
+Var=CoolantTemp unsigned 24,8 /u:°C /max:215 // Engine coolant temperature
+Var=ThrottlePosition unsigned 32,8 /u:% /max:100 // Throttle position percentage
+
+[Vehicle_Speed_Data]
+ID=101h
+Len=8
+CycleTime=100
+Var=VehicleSpeed unsigned 0,16 /f:0.01 /u:km/h /max:655.35 // Vehicle speed in kilometers per hour
+Var=Odometer unsigned 16,32 /u:km // Total distance traveled
+
+[Body_Control_Data]
+ID=200h
+Len=8
+CycleTime=200
+Var=DriverDoor unsigned 0,1 /e:DoorState // Driver door status
+Var=PassengerDoor unsigned 1,1 /e:DoorState // Passenger door status
+Var=RearLeftDoor unsigned 2,1 /e:DoorState // Rear left door status
+Var=RearRightDoor unsigned 3,1 /e:DoorState // Rear right door status
+Var=WindowPosition unsigned 8,8 /u:% /max:100 // Window position percentage
+Var=Headlights unsigned 16,1 /e:LightState // Headlights status
+Var=HighBeams unsigned 17,1 /e:LightState // High beam status
+
+[Electrical_System_Data]
+ID=300h
+Len=8
+CycleTime=500
+Var=FuelLevel unsigned 0,8 /u:% /max:100 // Fuel tank level percentage
+Var=BatteryVoltage unsigned 8,8 /f:0.1 /u:V /max:25.5 // Battery voltage
+Var=WarningLights unsigned 16,16 // Warning light status bits
+
+[Climate_Control_Data]
+ID=400h
+Len=8
+CycleTime=1000
+Var=TargetTemperature unsigned 0,8 /u:°C /max:30 // Target cabin temperature
+Var=ActualTemperature unsigned 8,8 /u:°C /max:215 // Actual cabin temperature
+Var=FanSpeed unsigned 16,2 /e:FanSpeed // Climate fan speed
+Var=ACOn unsigned 18,1 /e:LightState // Air conditioning status
+Var=HeatOn unsigned 19,1 /e:LightState // Heater status
+
+[Diagnostic_Request]
+ID=7E0h
+Len=8
+CycleTime=2000
+Var=ErrorCount unsigned 0,8 /max:255 // Number of active error codes
+Var=SystemHealth unsigned 8,8 /e:SystemHealth // Overall system health status
+Var=MessageCounter unsigned 16,8 /max:255 // Message sequence counter
+
+[Diagnostic_Response]
+ID=7E8h
+Len=8
+CycleTime=2000
+Var=ErrorCount unsigned 0,8 /max:255 // Number of active error codes
+Var=SystemHealth unsigned 8,8 /e:SystemHealth // Overall system health status
+Var=MessageCounter unsigned 16,8 /max:255 // Message sequence counter

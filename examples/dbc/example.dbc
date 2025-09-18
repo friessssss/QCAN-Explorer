@@ -1,0 +1,95 @@
+VERSION ""
+
+NS_ :
+	NS_DESC_
+	CM_
+	BA_DEF_
+	BA_
+	VAL_
+	CAT_DEF_
+	CAT_
+	FILTER
+	BA_DEF_DEF_
+	EV_DATA_
+	ENVVAR_DATA_
+	SGTYPE_
+	SGTYPE_VAL_
+	BA_DEF_SGTYPE_
+	BA_SGTYPE_
+	SIG_VALTYPE_
+	SIGTYPE_VALTYPE_
+	BO_TX_BU_
+	BA_DEF_REL_
+	BA_REL_
+	BA_DEF_DEF_REL_
+	BU_SG_REL_
+	BU_EV_REL_
+	BU_BO_REL_
+	SG_MUL_VAL_
+
+BS_:
+
+BU_: ECM TCM BCM Gateway Instrument_Cluster
+
+BO_ 256 Engine_Data: 8 ECM
+ SG_ Engine_Speed : 0|16@1+ (0.25,0) [0|16383.75] "rpm" Instrument_Cluster
+ SG_ Engine_Load : 16|8@1+ (0.392156863,0) [0|100] "%" Instrument_Cluster
+ SG_ Coolant_Temperature : 24|8@1+ (1,-40) [-40|215] "deg C" Instrument_Cluster
+ SG_ Throttle_Position : 32|8@1+ (0.392156863,0) [0|100] "%" Instrument_Cluster
+
+BO_ 257 Vehicle_Speed: 8 ECM
+ SG_ Vehicle_Speed : 0|16@1+ (0.01,0) [0|655.35] "km/h" Instrument_Cluster,BCM
+ SG_ Odometer : 16|32@1+ (0.1,0) [0|429496729.5] "km" Instrument_Cluster
+
+BO_ 512 Transmission_Data: 8 TCM
+ SG_ Gear_Position : 0|4@1+ (1,0) [0|15] "" Instrument_Cluster
+ SG_ Transmission_Temperature : 4|8@1+ (1,-40) [-40|215] "deg C" Instrument_Cluster
+ SG_ Torque_Converter_Lock : 12|1@1+ (1,0) [0|1] "" ECM
+
+BO_ 768 Body_Control: 8 BCM
+ SG_ Left_Turn_Signal : 0|1@1+ (1,0) [0|1] "" Instrument_Cluster
+ SG_ Right_Turn_Signal : 1|1@1+ (1,0) [0|1] "" Instrument_Cluster
+ SG_ Hazard_Lights : 2|1@1+ (1,0) [0|1] "" Instrument_Cluster
+ SG_ Headlights : 3|1@1+ (1,0) [0|1] "" Instrument_Cluster
+ SG_ High_Beams : 4|1@1+ (1,0) [0|1] "" Instrument_Cluster
+ SG_ Door_Locks : 5|2@1+ (1,0) [0|3] "" Gateway
+ SG_ Window_Position : 8|8@1+ (0.392156863,0) [0|100] "%" Gateway
+
+BO_ 1024 Instrument_Status: 8 Instrument_Cluster
+ SG_ Fuel_Level : 0|8@1+ (0.392156863,0) [0|100] "%" ECM,Gateway
+ SG_ Battery_Voltage : 8|8@1+ (0.1,0) [0|25.5] "V" ECM,Gateway
+ SG_ Warning_Lights : 16|16@1+ (1,0) [0|65535] "" Gateway
+
+CM_ BU_ ECM "Engine Control Module";
+CM_ BU_ TCM "Transmission Control Module";
+CM_ BU_ BCM "Body Control Module";
+CM_ BU_ Gateway "CAN Gateway";
+CM_ BU_ Instrument_Cluster "Instrument Cluster";
+
+CM_ BO_ 256 "Engine operating parameters";
+CM_ BO_ 257 "Vehicle speed and odometer";
+CM_ BO_ 512 "Transmission status";
+CM_ BO_ 768 "Body control functions";
+CM_ BO_ 1024 "Instrument cluster status";
+
+CM_ SG_ 256 Engine_Speed "Engine RPM from crankshaft sensor";
+CM_ SG_ 256 Engine_Load "Calculated engine load percentage";
+CM_ SG_ 256 Coolant_Temperature "Engine coolant temperature";
+CM_ SG_ 256 Throttle_Position "Throttle position sensor";
+
+VAL_ 512 Gear_Position 0 "Park" 1 "Reverse" 2 "Neutral" 3 "Drive" 4 "Sport" 5 "Manual";
+VAL_ 768 Door_Locks 0 "Unlocked" 1 "Locked" 2 "Auto_Lock" 3 "Child_Lock";
+
+BA_DEF_ "BusType" STRING;
+BA_DEF_ BO_ "GenMsgCycleTime" INT 0 3600000;
+BA_DEF_ SG_ "GenSigStartValue" FLOAT 0 0;
+
+BA_DEF_DEF_ "BusType" "CAN";
+BA_DEF_DEF_ "GenMsgCycleTime" 0;
+BA_DEF_DEF_ "GenSigStartValue" 0;
+
+BA_ "GenMsgCycleTime" BO_ 256 100;
+BA_ "GenMsgCycleTime" BO_ 257 100;
+BA_ "GenMsgCycleTime" BO_ 512 100;
+BA_ "GenMsgCycleTime" BO_ 768 200;
+BA_ "GenMsgCycleTime" BO_ 1024 500;

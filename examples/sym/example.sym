@@ -1,0 +1,58 @@
+FormatVersion=6.0 // Do not edit this line!
+Title="QCAN Explorer Example"
+
+{ENUMS}
+Enum=OFF_ON(0="OFF", 1="ON")
+Enum=doorLock(0="Unlocked", 1="Locked", 2="Fault", 3="Reserved")
+Enum=powerModes(0="Reserved", 1="STORAGE", 2="CAMP", 3="ROAD", 4="CHARGE", 5="GRID", 6="Reserved", 7="LV MAINTENANCE", 8="FOTA UPDATE", 9="ACCESSORY", 10="SERVICE", 11="Reserved", 12="Reserved", 13="Reserved", 14="Error", 15="No Value")
+Enum=protoLightState(0="LightOff", 1="LightOn")
+Enum=protoPreDefinedWhiteLightTem(0="Warm", 1="Cool", 2="Neutral", 3="Reserved")
+
+{SIGNALS}
+Sig=status_PowerMode_VCU unsigned 4 /max:1 /e:powerModes // current power-mode
+Sig=status_HVReadiness_VCU unsigned 1 /e:OFF_ON
+Sig=status_PropReadiness_VCU unsigned 1 /e:OFF_ON
+Sig=cmd_LightIntBaState_VCU unsigned 1 /e:protoLightState // Bathroom lighting
+Sig=cmd_LightIntBaBright_VCU unsigned 7 /u:% /max:100 // Bathroom light
+Sig=cmd_LightIntBaTemp_VCU unsigned 2 /e:protoPreDefinedWhiteLightTem // Bathroom lighting
+Sig=status_DoorMainLock_BCMC unsigned 2 /max:1 /e:doorLock
+Sig=status_WaterTemp_BCMTFr unsigned 7 /o:20
+Sig=status_LevelPitch_VCU unsigned 6 /u:deg /o:-30 /max:30
+Sig=status_LevelRoll_VCU unsigned 6 /u:deg /o:-30 /max:30
+
+{SENDRECEIVE}
+
+[VCU_Status1]
+ID=133h
+Len=8
+CycleTime=100
+Sig=status_PowerMode_VCU 2
+Sig=status_HVReadiness_VCU 8
+Sig=status_PropReadiness_VCU 9
+
+[VCU_Cmd5]
+ID=137h // On-Change up to <50ms> allowed
+Len=8
+CycleTime=1000
+Sig=cmd_LightIntBaState_VCU 0
+Sig=cmd_LightIntBaBright_VCU 1
+Sig=cmd_LightIntBaTemp_VCU 8
+
+[BCMC_Status1]
+ID=163h
+Len=8
+CycleTime=100
+Sig=status_DoorMainLock_BCMC 16
+
+[BCMTFr_Status1]
+ID=143h
+Len=8
+CycleTime=100
+Sig=status_WaterTemp_BCMTFr 21
+
+[VCU_Status2]
+ID=134h
+Len=8
+CycleTime=100
+Sig=status_LevelRoll_VCU 16
+Sig=status_LevelPitch_VCU 22

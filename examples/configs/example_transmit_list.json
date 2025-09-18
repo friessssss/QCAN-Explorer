@@ -1,0 +1,48 @@
+{
+  "version": "1.0",
+  "description": "Example CAN message transmit list for testing",
+  "messages": [
+    {
+      "name": "Engine_RPM_Test",
+      "id": 256,
+      "data": [0, 200, 75, 90, 50, 0, 0, 0],
+      "period": 100,
+      "enabled": true
+    },
+    {
+      "name": "Vehicle_Speed_Test",
+      "id": 257,
+      "data": [0, 100, 0, 0, 0, 50, 0, 0],
+      "period": 100,
+      "enabled": true
+    },
+    {
+      "name": "Transmission_Test",
+      "id": 512,
+      "data": [3, 85, 0, 0, 0, 0, 0, 0],
+      "period": 100,
+      "enabled": false
+    },
+    {
+      "name": "Body_Control_Test",
+      "id": 768,
+      "data": [24, 80, 0, 0, 0, 0, 0, 0],
+      "period": 200,
+      "enabled": false
+    },
+    {
+      "name": "Diagnostic_Request",
+      "id": 2015,
+      "data": [2, 1, 0, 0, 0, 0, 0, 0],
+      "period": 0,
+      "enabled": false
+    },
+    {
+      "name": "Heartbeat",
+      "id": 2000,
+      "data": [170, 85, 170, 85, 0, 0, 0, 0],
+      "period": 1000,
+      "enabled": true
+    }
+  ]
+}
