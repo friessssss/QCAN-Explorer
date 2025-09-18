@@ -18,6 +18,7 @@ from PyQt6.QtGui import QFont, QColor, QPixmap
 # Network manager will be passed in constructor
 from canbus.messages import CANMessage
 from utils.sym_parser import SymParser
+from utils.message_decoder import MessageDecoder
 
 
 class SignalSelectionDialog(QDialog):
@@ -41,7 +42,7 @@ class SignalSelectionDialog(QDialog):
         
         # Signal tree
         self.signal_tree = QTreeWidget()
-        self.signal_tree.setHeaderLabels(["Signal Name", "Message", "Unit", "Description"])
+        self.signal_tree.setHeaderLabels(["Signal Name", "Message", "Bus", "Unit", "Description"])
         self.signal_tree.setAlternatingRowColors(True)
         self.signal_tree.setSelectionMode(QTreeWidget.SelectionMode.MultiSelection)
         
@@ -50,7 +51,8 @@ class SignalSelectionDialog(QDialog):
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         
         layout.addWidget(self.signal_tree)
         
@@ -95,19 +97,19 @@ class SignalSelectionDialog(QDialog):
             
         # Add signals from each message
         for msg_name, message in sym_parser.messages.items():
-            # Add variables (these are the actual plottable signals)
+            # Add variables (Var= entries - these are the actual plottable signals)
             for variable in message.variables:
                 item = QTreeWidgetItem(self.signal_tree)
-                item.setText(0, variable.name)  # Just signal name
+                item.setText(0, variable.name)  # Signal name only
                 item.setText(1, msg_name)       # Message name
-                item.setText(2, variable.unit or "")  # Unit
-                item.setText(3, getattr(variable, 'comment', '') or "")  # Description if available
+                item.setText(2, "1")            # Default bus number for single parser
+                item.setText(3, variable.unit or "")  # Unit
+                item.setText(4, getattr(variable, 'comment', '') or "")  # Description if available
                 
-                # Store full info for retrieval
-                item.setData(0, Qt.ItemDataRole.UserRole, (msg_name, variable.name))
+                # Store full info for retrieval (need to add bus number and CAN ID for single parser too)
+                item.setData(0, Qt.ItemDataRole.UserRole, (msg_name, variable.name, 1, message.can_id))
                 
-            # Also add signals from the signals list if they exist
-            # (Some SYM files might have signals defined separately)
+            # Add signal assignments (Sig= entries)
             for signal_assignment in message.signals:
                 # Signal assignments are tuples of (signal_name, start_bit)
                 if isinstance(signal_assignment, tuple) and len(signal_assignment) >= 2:
@@ -116,13 +118,14 @@ class SignalSelectionDialog(QDialog):
                     if signal_name in sym_parser.signals:
                         signal_def = sym_parser.signals[signal_name]
                         item = QTreeWidgetItem(self.signal_tree)
-                        item.setText(0, signal_def.name)  # Signal name
-                        item.setText(1, msg_name)         # Message name
-                        item.setText(2, signal_def.unit or "")  # Unit
-                        item.setText(3, signal_def.comment or "")  # Description
+                        item.setText(0, signal_name)  # Signal name only
+                        item.setText(1, msg_name)     # Message name
+                        item.setText(2, "1")          # Default bus number for single parser
+                        item.setText(3, signal_def.unit or "")  # Unit
+                        item.setText(4, signal_def.comment or "")  # Description
                         
-                        # Store full info for retrieval
-                        item.setData(0, Qt.ItemDataRole.UserRole, (msg_name, signal_def.name))
+                        # Store full info for retrieval (need to add bus number and CAN ID for single parser too)
+                        item.setData(0, Qt.ItemDataRole.UserRole, (msg_name, signal_name, 1, message.can_id))
 
     def load_signals_from_networks(self, network_parsers: List[tuple]):
         """Load signals from multiple network parsers"""
@@ -131,24 +134,56 @@ class SignalSelectionDialog(QDialog):
         if not network_parsers:
             return
             
+        print(f"\\n🔄 Loading signals from {len(network_parsers)} network parsers")
+        
         # Add signals from each network's parser
         for bus_number, sym_parser in network_parsers:
             if not sym_parser or not sym_parser.messages:
                 continue
                 
+            print(f"Loading signals from Bus {bus_number}: {len(sym_parser.messages)} messages")
+                
             # Add signals from each message
             for msg_name, message in sym_parser.messages.items():
+                # Add variables (Var= entries)
                 for variable in message.variables:
                     item = QTreeWidgetItem(self.signal_tree)
-                    # Show full signal name with bus information
-                    signal_display_name = f"Bus{bus_number}.{msg_name}.{variable.name}"
-                    item.setText(0, signal_display_name)
-                    item.setText(1, msg_name)  # Message name
-                    item.setText(2, variable.unit or "")  # Unit
-                    item.setText(3, getattr(variable, 'comment', '') or "")  # Description
+                    item.setText(0, variable.name)  # Signal name only
+                    item.setText(1, msg_name)       # Message name
+                    item.setText(2, str(bus_number))  # Bus number
+                    item.setText(3, variable.unit or "")  # Unit
+                    item.setText(4, getattr(variable, 'comment', '') or "")  # Description
                     
                     # Store message name, signal name, bus number, and CAN ID for internal use
-                    item.setData(0, Qt.ItemDataRole.UserRole, (msg_name, variable.name, bus_number, message.can_id))
+                    data_to_store = (msg_name, variable.name, bus_number, message.can_id)
+                    item.setData(0, Qt.ItemDataRole.UserRole, data_to_store)
+                    print(f"Storing data for {variable.name}: {data_to_store}")
+                # Debug output for first few signals
+                if len(self.signal_tree.findItems("", Qt.MatchFlag.MatchContains)) < 5:
+                    print(f"Variable: {variable.name} in {msg_name} (ID: 0x{message.can_id:X}) - Data stored: {(msg_name, variable.name, bus_number, message.can_id)}")
+                
+                # Add signal assignments (Sig= entries)
+                for signal_assignment in message.signals:
+                    # Signal assignments are tuples of (signal_name, start_bit)
+                    if isinstance(signal_assignment, tuple) and len(signal_assignment) >= 2:
+                        signal_name = signal_assignment[0]
+                        # Check if this signal is defined in the global signals dictionary
+                        if signal_name in sym_parser.signals:
+                            signal_def = sym_parser.signals[signal_name]
+                            item = QTreeWidgetItem(self.signal_tree)
+                            item.setText(0, signal_name)  # Signal name only
+                            item.setText(1, msg_name)     # Message name
+                            item.setText(2, str(bus_number))  # Bus number
+                            item.setText(3, signal_def.unit or "")  # Unit
+                            item.setText(4, signal_def.comment or "")  # Description
+                            
+                            # Store message name, signal name, bus number, and CAN ID for internal use
+                            data_to_store = (msg_name, signal_name, bus_number, message.can_id)
+                            item.setData(0, Qt.ItemDataRole.UserRole, data_to_store)
+                            print(f"Storing data for signal {signal_name}: {data_to_store}")
+                            # Debug output for first few signals
+                            if len(self.signal_tree.findItems("", Qt.MatchFlag.MatchContains)) < 10:
+                                print(f"Signal: {signal_name} in {msg_name} (ID: 0x{message.can_id:X}) - Data stored: {(msg_name, signal_name, bus_number, message.can_id)}")
                 
     def update_selection_count(self):
         """Update selection count label"""
@@ -166,16 +201,31 @@ class SignalSelectionDialog(QDialog):
     def get_selected_signals(self):
         """Get list of selected signals with bus information"""
         selected = []
-        for item in self.signal_tree.selectedItems():
+        print(f"\\n🔍 Signal Selection Debug:")
+        print(f"Total selected items: {len(self.signal_tree.selectedItems())}")
+        
+        for i, item in enumerate(self.signal_tree.selectedItems()):
+            signal_name = item.text(0)
+            message_name = item.text(1)
+            print(f"Selected item {i}: {signal_name} in {message_name}")
+            
             data = item.data(0, Qt.ItemDataRole.UserRole)
+            print(f"  Raw data from item: {data} (type: {type(data)})")
             if data:
+                print(f"  Data: {data}")
                 if len(data) >= 4:
                     msg_name, signal_name, bus_number, can_id = data
                     selected.append((msg_name, signal_name, bus_number, can_id))
+                    print(f"  Added: {msg_name}.{signal_name} (ID: 0x{can_id:X}, Bus: {bus_number})")
                 else:
                     # Fallback for old format
                     msg_name, signal_name = data[:2]
                     selected.append((msg_name, signal_name, 0, 0))
+                    print(f"  Added (fallback): {msg_name}.{signal_name}")
+            else:
+                print(f"  No data stored for this item!")
+                
+        print(f"Total signals to return: {len(selected)}")
         return selected
 
 
@@ -327,8 +377,18 @@ class PlottingTab(QWidget):
         self.plot_frozen = False
         self.trigger_mode = "Free Run"
         
+        # Thread management
+        self.trace_loader = None
+        
         # Load available presets on startup
         self.load_available_presets()
+    
+    def closeEvent(self, event):
+        """Handle widget close event to clean up threads"""
+        if self.trace_loader and self.trace_loader.isRunning():
+            self.trace_loader.quit()
+            self.trace_loader.wait(3000)  # Wait up to 3 seconds
+        event.accept()
         
     def setup_ui(self):
         """Set up the plotting tab UI"""
@@ -646,6 +706,7 @@ class PlottingTab(QWidget):
             parser = network.get_symbol_parser()
             if parser and parser.messages:
                 available_parsers.append((network.config.bus_number, parser))
+                print(f"Found symbol parser for Bus {network.config.bus_number}: {len(parser.messages)} messages")
         
         if not available_parsers:
             QMessageBox.warning(self, "Warning", "No symbol files assigned to any network")
@@ -809,24 +870,19 @@ class PlottingTab(QWidget):
         # Find the signal variable
         for variable in message_def.variables:
             if variable.name == signal_name:
-                if variable.start_bit + variable.bit_length <= len(msg.data) * 8:
-                    # Extract bits
-                    start_byte = variable.start_bit // 8
-                    end_byte = (variable.start_bit + variable.bit_length - 1) // 8 + 1
-                    
-                    if end_byte <= len(msg.data):
-                        raw_bytes = msg.data[start_byte:end_byte]
-                        raw_value = int.from_bytes(raw_bytes, byteorder='little')
-                        
-                        # Apply bit masking
-                        if variable.start_bit % 8 != 0 or variable.bit_length % 8 != 0:
-                            bit_offset = variable.start_bit % 8
-                            mask = (1 << variable.bit_length) - 1
-                            raw_value = (raw_value >> bit_offset) & mask
-                        
-                        # Apply scaling
-                        scaled_value = raw_value * variable.factor + variable.offset
-                        return float(scaled_value)
+                return MessageDecoder.decode_signal_value_float(
+                    sym_parser, msg.data, variable.start_bit, variable.bit_length,
+                    variable.factor, variable.offset
+                )
+        
+        # Check signal assignments (Sig= entries)
+        for signal_assignment_name, start_bit in message_def.signals:
+            if signal_assignment_name == signal_name and signal_assignment_name in sym_parser.signals:
+                signal_def = sym_parser.signals[signal_assignment_name]
+                return MessageDecoder.decode_signal_value_float(
+                    sym_parser, msg.data, start_bit, signal_def.bit_length,
+                    signal_def.factor, signal_def.offset
+                )
                         
         return None
         
@@ -1565,12 +1621,17 @@ class PlottingTab(QWidget):
                 # Import the LogReader from logging tab
                 from gui.logging_tab import LogReader
                 
+                # Stop any existing trace loader
+                if self.trace_loader and self.trace_loader.isRunning():
+                    self.trace_loader.quit()
+                    self.trace_loader.wait()
+                
                 # Clear current data
                 self.clear_plots()
                 self.trace_messages = []
                 
-                # Create log reader
-                log_reader = LogReader(filename)
+                # Create log reader and store as instance variable
+                self.trace_loader = LogReader(filename)
                 
                 # Connect signals
                 def on_message_loaded(msg):
@@ -1578,19 +1639,23 @@ class PlottingTab(QWidget):
                     
                 def on_load_finished(count):
                     self.on_trace_file_loaded(count)
+                    # Clean up thread reference when finished
+                    self.trace_loader = None
                     
                 def on_load_error(error):
                     QMessageBox.critical(self, "Error", f"Failed to load trace file: {error}")
+                    # Clean up thread reference on error
+                    self.trace_loader = None
                 
-                log_reader.message_loaded.connect(on_message_loaded)
-                log_reader.finished.connect(on_load_finished)
-                log_reader.error_occurred.connect(on_load_error)
+                self.trace_loader.message_loaded.connect(on_message_loaded)
+                self.trace_loader.finished.connect(on_load_finished)
+                self.trace_loader.error_occurred.connect(on_load_error)
                 
                 # Update status
                 self.sym_status_label.setText("Loading trace file...")
                 
-                # Start loading
-                log_reader.run()
+                # Start loading in background thread
+                self.trace_loader.start()
                 
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to load trace file: {str(e)}")
@@ -1599,8 +1664,23 @@ class PlottingTab(QWidget):
         """Handle trace file loading completion"""
         self.is_trace_mode = True
         
+        # Analyze trace file contents
+        unique_ids = set()
+        bus_summary = {}
+        for msg in self.trace_messages:
+            unique_ids.add(msg.arbitration_id)
+            if msg.bus_number not in bus_summary:
+                bus_summary[msg.bus_number] = set()
+            bus_summary[msg.bus_number].add(msg.arbitration_id)
+        
+        print(f"\\n📊 Trace File Analysis:")
+        print(f"Total messages: {message_count}")
+        print(f"Unique CAN IDs: {len(unique_ids)}")
+        for bus, ids in bus_summary.items():
+            print(f"Bus {bus}: {len(ids)} unique IDs - {', '.join(f'0x{id:X}' for id in sorted(list(ids))[:10])}{'...' if len(ids) > 10 else ''}")
+        
         # Update status
-        self.sym_status_label.setText(f"Trace loaded: {message_count} messages")
+        self.sym_status_label.setText(f"Trace loaded: {message_count} messages, {len(unique_ids)} unique IDs")
         self.sym_status_label.setStyleSheet("color: #666666; font-weight: bold;")
         
         # Process all messages to populate selected signals
@@ -1608,39 +1688,66 @@ class PlottingTab(QWidget):
             self.plot_trace_data()
             
         QMessageBox.information(self, "Success", 
-                              f"Loaded trace file with {message_count} messages\\nSelect signals and they will be plotted automatically")
+                              f"Loaded trace file with {message_count} messages\\nUnique CAN IDs: {len(unique_ids)}\\nSelect signals matching these IDs for plotting")
                               
     def plot_trace_data(self):
         """Plot data from loaded trace file"""
-        if not self.trace_messages or not self.signals:
+        if not self.trace_messages:
+            print("No trace messages loaded")
+            return
+        if not self.signals:
+            print("No signals selected for plotting")
             return
             
         print(f"Plotting {len(self.trace_messages)} messages from trace file...")
+        print(f"Selected signals: {list(self.signals.keys())}")
         
         # Find the start time
         if self.trace_messages:
             self.start_time = min(msg.timestamp for msg in self.trace_messages)
         
         # Process each message in the trace
-        for msg in self.trace_messages:
+        points_added = 0
+        for i, msg in enumerate(self.trace_messages):
+            # Debug first few messages
+            if i < 3:
+                print(f"Trace message {i}: ID=0x{msg.arbitration_id:X}, Bus={msg.bus_number}")
+            
             # Find signals to update for this message (match both CAN ID and bus number)
             for signal_key, signal_data in self.signals.items():
-                if signal_data.can_id == msg.arbitration_id and signal_data.bus_number == msg.bus_number:
+                if i < 3:  # Debug first few comparisons
+                    print(f"Comparing signal {signal_key}: signal_id=0x{signal_data.can_id:X}, signal_bus={signal_data.bus_number} vs msg_id=0x{msg.arbitration_id:X}, msg_bus={msg.bus_number}")
+                
+                # In trace mode, be more flexible with bus matching since trace files might use different bus numbers
+                bus_match = (signal_data.bus_number == msg.bus_number) or self.is_trace_mode
+                if signal_data.can_id == msg.arbitration_id and bus_match:
                     # Decode the signal value
                     value = self.decode_signal_value(msg, signal_data.message_name, signal_data.signal_name)
                     if value is not None:
                         # Calculate relative time
                         relative_time = msg.timestamp - self.start_time
                         signal_data.add_point(relative_time, value)
+                        points_added += 1
+                        if points_added <= 5:  # Debug first few points
+                            print(f"Added point: {signal_key} = {value} at time {relative_time:.3f}s")
+            
+            # Debug progress every 1000 messages
+            if i % 1000 == 0 and i > 0:
+                print(f"Processed {i} messages, added {points_added} data points")
         
         # Update all plots with trace data
-        for signal_data in self.signals.values():
+        plots_updated = 0
+        for signal_key, signal_data in self.signals.items():
             if signal_data.plot_item and signal_data.times:
                 times, values = signal_data.get_data_arrays()
                 signal_data.plot_item.setData(times, values)
+                plots_updated += 1
+                print(f"Updated plot for {signal_key}: {len(times)} points")
+            else:
+                print(f"No plot item or data for {signal_key}: plot_item={signal_data.plot_item is not None}, times={len(signal_data.times) if signal_data.times else 0}")
                 
         self.update_stats()
-        print(f"✅ Plotted trace data for {len(self.signals)} signals")
+        print(f"✅ Updated {plots_updated} plots with trace data (total points added: {points_added})")
         
     def plot_signal_from_trace(self, signal_data: SignalData):
         """Plot a specific signal from loaded trace data"""
@@ -1655,21 +1762,34 @@ class PlottingTab(QWidget):
             self.start_time = min(msg.timestamp for msg in self.trace_messages)
         
         # Process trace messages for this specific signal (match both CAN ID and bus number)
+        matches_found = 0
+        values_decoded = 0
         for msg in self.trace_messages:
-            if signal_data.can_id == msg.arbitration_id and signal_data.bus_number == msg.bus_number:
+            # In trace mode, be more flexible with bus matching
+            bus_match = (signal_data.bus_number == msg.bus_number) or self.is_trace_mode
+            if signal_data.can_id == msg.arbitration_id and bus_match:
+                matches_found += 1
                 # Decode the signal value
                 value = self.decode_signal_value(msg, signal_data.message_name, signal_data.signal_name)
                 if value is not None:
                     # Calculate relative time
                     relative_time = msg.timestamp - self.start_time
                     signal_data.add_point(relative_time, value)
+                    values_decoded += 1
+        
+        print(f"Signal {signal_data.signal_name}: Found {matches_found} matching messages, decoded {values_decoded} values")
+        
+        # Add to plot if not already added
+        if not signal_data.plot_item:
+            self.add_signal_to_plot(signal_data)
         
         # Update the plot
         if signal_data.plot_item and signal_data.times:
             times, values = signal_data.get_data_arrays()
             signal_data.plot_item.setData(times, values)
-            
-        print(f"Plotted {len(signal_data.times)} points for {signal_data.message_name}.{signal_data.signal_name}")
+            print(f"Updated plot with {len(times)} points for {signal_data.signal_name}")
+        else:
+            print(f"No plot item or no data for {signal_data.signal_name}: plot_item={signal_data.plot_item is not None}, data_points={len(signal_data.times) if signal_data.times else 0}")
 
 
 class SignalManagementDialog(QDialog):

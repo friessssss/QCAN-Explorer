@@ -482,11 +482,20 @@ class NetworkManagerTab(QWidget):
             
         network_id = current_item.data(0, Qt.ItemDataRole.UserRole)
         hardware_text = self.hardware_combo.currentText()
+        hardware_key = self.hardware_combo.currentData()
         
         if hardware_text and hardware_text != "Select hardware...":
-            # Extract hardware key from combo text
-            hardware_key = self.hardware_combo.currentData()
-            if hardware_key:
+            if hardware_key == "none":
+                # Disconnect the network if "None" is selected
+                success = self.network_manager.disconnect_network(network_id)
+                if success:
+                    QMessageBox.information(self, "Network Unbound", 
+                                          f"Network has been unbound from hardware interface")
+                else:
+                    QMessageBox.warning(self, "Disconnect Failed", 
+                                      "Failed to unbind network from hardware interface")
+            elif hardware_key:
+                # Connect to hardware interface
                 success = self.network_manager.connect_network(network_id, hardware_key)
                 if not success:
                     QMessageBox.warning(self, "Connection Failed", 
@@ -577,16 +586,21 @@ class NetworkManagerTab(QWidget):
             hardware_data = self.hardware_combo.currentData()
             hardware_text = self.hardware_combo.currentText()
             has_hardware = (hardware_data is not None and 
-                           hardware_text != "Select hardware..." and
-                           hardware_text != "No networks connected")
+                           hardware_text != "Select hardware...")
             
             # Ensure is_connected returns a proper boolean
             is_connected = bool(network.is_connected())
             
             # Enable connect button if:
-            # - Network is not connected AND
-            # - Valid hardware is selected
-            connect_enabled = not is_connected and has_hardware
+            # - Valid hardware is selected (including "none" for unbinding)
+            # Update button text based on selection
+            if hardware_data == "none":
+                self.connect_btn.setText("Unbind")
+                connect_enabled = is_connected  # Can only unbind if currently connected
+            else:
+                self.connect_btn.setText("Connect")
+                connect_enabled = not is_connected and has_hardware
+            
             disconnect_enabled = is_connected
             
             # Ensure we have proper boolean values
@@ -838,6 +852,7 @@ class NetworkManagerTab(QWidget):
         
         self.hardware_combo.clear()
         self.hardware_combo.addItem("Select hardware...", None)
+        self.hardware_combo.addItem("None (No Interface)", "none")
         
         for interface in interfaces:
             if interface.available:
@@ -868,10 +883,23 @@ class NetworkManagerTab(QWidget):
                     # Interface is available
                     self.hardware_combo.addItem(base_text, hardware_key)
                 
-        # Restore selection if possible
-        index = self.hardware_combo.findText(current_text)
-        if index >= 0:
-            self.hardware_combo.setCurrentIndex(index)
+        # Set the correct selection based on current network state
+        if current_network and current_network.is_connected() and current_network_hardware:
+            # Network is connected - find and select the connected hardware
+            index = self.hardware_combo.findData(current_network_hardware)
+            if index >= 0:
+                self.hardware_combo.setCurrentIndex(index)
+            else:
+                # Fallback to "Select hardware..."
+                self.hardware_combo.setCurrentIndex(0)
+        else:
+            # Network is not connected - select "None"
+            none_index = self.hardware_combo.findData("none")
+            if none_index >= 0:
+                self.hardware_combo.setCurrentIndex(none_index)
+            else:
+                # Fallback to "Select hardware..."
+                self.hardware_combo.setCurrentIndex(0)
             
         # Update connect button state after hardware combo update
         self.update_connect_button_state()

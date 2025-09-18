@@ -1,0 +1,30 @@
+{
+  "name": "MTA Test",
+  "timestamp": "2025-09-18 14:45:55",
+  "signals": [
+    {
+      "message_name": "\"MTA-D_STATUS_Output\"",
+      "signal_name": "IOut",
+      "bus_number": 1,
+      "can_id": 419365120,
+      "y_axis": "left",
+      "color": "#FF6B6B"
+    },
+    {
+      "message_name": "\"MTA-D_CMD_Control\"",
+      "signal_name": "CtlIoutMaxSet",
+      "bus_number": 1,
+      "can_id": 419366912,
+      "y_axis": "left",
+      "color": "#4ECDC4"
+    },
+    {
+      "message_name": "\"MTA-D_CMD_Control\"",
+      "signal_name": "CtlIacMaxSet",
+      "bus_number": 1,
+      "can_id": 419366912,
+      "y_axis": "left",
+      "color": "#45B7D1"
+    }
+  ]
+}

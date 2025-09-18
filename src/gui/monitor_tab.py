@@ -3,6 +3,7 @@ Monitor Tab - Real-time CAN message monitoring
 """
 
 import time
+from datetime import datetime
 from typing import Dict, List
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, 
                              QTableWidgetItem, QHeaderView, QPushButton, QLabel,
@@ -14,6 +15,7 @@ from PyQt6.QtGui import QFont, QColor
 
 from canbus.messages import CANMessage
 from utils.sym_parser import SymParser
+from utils.message_decoder import MessageDecoder
 
 
 class MessageTreeWidget(QTreeWidget):
@@ -84,15 +86,7 @@ class MessageTreeWidget(QTreeWidget):
         
     def get_message_name(self, msg_id: int, bus_number: int = 0) -> str:
         """Get message name from network-assigned SYM parser"""
-        sym_parser = self.get_sym_parser_for_bus(bus_number)
-        if not sym_parser or not sym_parser.messages:
-            return f"Unknown_0x{msg_id:X}"
-        
-        for msg_name, msg_def in sym_parser.messages.items():
-            if msg_def.can_id == msg_id:
-                return msg_name
-        
-        return f"Unknown_0x{msg_id:X}"
+        return MessageDecoder.get_message_name(msg_id, bus_number, self.network_manager)
         
     def decode_message_signals(self, msg: CANMessage) -> List[tuple]:
         """Decode message into individual signal name-value pairs"""
@@ -100,51 +94,8 @@ class MessageTreeWidget(QTreeWidget):
         if not sym_parser or not sym_parser.messages:
             return []
         
-        # Find matching message definition
-        for msg_name, msg_def in sym_parser.messages.items():
-            if msg_def.can_id == msg.arbitration_id:
-                signals = []
-                
-                # Decode each variable
-                for var in msg_def.variables:
-                    if var.start_bit + var.bit_length <= len(msg.data) * 8:
-                        # Extract bits (simplified - assumes byte-aligned)
-                        start_byte = var.start_bit // 8
-                        end_byte = (var.start_bit + var.bit_length - 1) // 8 + 1
-                        
-                        if end_byte <= len(msg.data):
-                            # Extract raw value
-                            raw_bytes = msg.data[start_byte:end_byte]
-                            raw_value = int.from_bytes(raw_bytes, byteorder='little')
-                            
-                            # Apply bit masking for partial bytes
-                            if var.start_bit % 8 != 0 or var.bit_length % 8 != 0:
-                                # Simplified bit extraction
-                                bit_offset = var.start_bit % 8
-                                mask = (1 << var.bit_length) - 1
-                                raw_value = (raw_value >> bit_offset) & mask
-                            
-                            # Apply scaling
-                            scaled_value = raw_value * var.factor + var.offset
-                            
-                            # Format output
-                            unit_str = f" {var.unit}" if var.unit else ""
-                            
-                            # Handle enum values
-                            if var.enum_name and sym_parser.enums and var.enum_name in sym_parser.enums:
-                                enum = sym_parser.enums[var.enum_name]
-                                if int(scaled_value) in enum.values:
-                                    value_str = enum.values[int(scaled_value)]
-                                else:
-                                    value_str = f"{scaled_value:.2f}{unit_str}"
-                            else:
-                                value_str = f"{scaled_value:.2f}{unit_str}"
-                            
-                            signals.append((var.name, value_str))
-                
-                return signals
-        
-        return []
+        # Use shared decoder
+        return MessageDecoder.decode_message_signals(msg, sym_parser)
         
     def add_message(self, msg: CANMessage):
         """Add a new CAN message to the tree"""
@@ -183,7 +134,8 @@ class MessageTreeWidget(QTreeWidget):
     def update_tree_item(self, item: QTreeWidgetItem, msg: CANMessage, stats: Dict):
         """Update a tree item with message data"""
         # Time
-        time_str = time.strftime("%H:%M:%S.%f", time.localtime(msg.timestamp))[:-3]
+        dt = datetime.fromtimestamp(msg.timestamp)
+        time_str = dt.strftime("%H:%M:%S.%f")[:-3]  # Remove last 3 digits to get milliseconds
         item.setText(0, time_str)
         
         # Bus number with color coding
@@ -322,49 +274,13 @@ class MessageTableWidget(QTableWidget):
         if not sym_parser or not sym_parser.messages:
             return "No symbol file assigned to this bus"
         
-        # Find matching message definition
-        for msg_name, msg_def in sym_parser.messages.items():
-            if msg_def.can_id == msg.arbitration_id:
-                decoded_lines = []
-                
-                # Decode each variable
-                for var in msg_def.variables:
-                    if var.start_bit + var.bit_length <= len(msg.data) * 8:
-                        # Extract bits (simplified - assumes byte-aligned)
-                        start_byte = var.start_bit // 8
-                        end_byte = (var.start_bit + var.bit_length - 1) // 8 + 1
-                        
-                        if end_byte <= len(msg.data):
-                            # Extract raw value
-                            raw_bytes = msg.data[start_byte:end_byte]
-                            raw_value = int.from_bytes(raw_bytes, byteorder='little')
-                            
-                            # Apply bit masking for partial bytes
-                            if var.start_bit % 8 != 0 or var.bit_length % 8 != 0:
-                                # Simplified bit extraction
-                                bit_offset = var.start_bit % 8
-                                mask = (1 << var.bit_length) - 1
-                                raw_value = (raw_value >> bit_offset) & mask
-                            
-                            # Apply scaling
-                            scaled_value = raw_value * var.factor + var.offset
-                            
-                            # Format output
-                            unit_str = f" {var.unit}" if var.unit else ""
-                            
-                            # Handle enum values
-                            if var.enum_name and sym_parser.enums and var.enum_name in sym_parser.enums:
-                                enum = sym_parser.enums[var.enum_name]
-                                if int(scaled_value) in enum.values:
-                                    value_str = enum.values[int(scaled_value)]
-                                else:
-                                    value_str = f"{scaled_value:.2f}{unit_str}"
-                            else:
-                                value_str = f"{scaled_value:.2f}{unit_str}"
-                            
-                            decoded_lines.append(f"{var.name} = {value_str}")
-                
-                return "\n".join(decoded_lines) if decoded_lines else "No variables decoded"
+        # Use shared decoder
+        signals = MessageDecoder.decode_message_signals(msg, sym_parser)
+        if signals:
+            decoded_lines = [f"{name} = {value}" for name, value in signals]
+            return "\n".join(decoded_lines)
+        else:
+            return "No variables decoded"
         
         return f"Unknown message ID: 0x{msg.arbitration_id:X}"
         

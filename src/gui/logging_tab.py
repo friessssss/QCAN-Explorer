@@ -17,32 +17,33 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSlot, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QColor
 
 from canbus.messages import CANMessage
+from utils.message_decoder import MessageDecoder
 
 
 class LogTextWidget(QTextEdit):
     """Custom text widget with hover tooltips for decoded messages"""
     
-    def __init__(self):
+    def __init__(self, network_manager=None):
         super().__init__()
-        self.sym_parser = None
+        self.network_manager = network_manager
         self.messages = []  # Store message objects for tooltip lookup
         self.setMouseTracking(True)
         self.header_lines = 2  # Number of header lines to skip
         
-    def set_sym_parser(self, parser):
-        """Set SYM parser for message decoding"""
-        self.sym_parser = parser
+    def get_symbol_parser_for_message(self, msg):
+        """Get appropriate symbol parser for a message based on its bus number"""
+        if not self.network_manager:
+            return None
+            
+        networks = self.network_manager.get_all_networks()
+        for network in networks.values():
+            if network.config.bus_number == msg.bus_number:
+                return network.get_symbol_parser()
+        return None
         
-    def get_message_name(self, msg_id: int) -> str:
-        """Get message name from SYM parser"""
-        if not self.sym_parser or not self.sym_parser.messages:
-            return ""
-        
-        for msg_name, msg_def in self.sym_parser.messages.items():
-            if msg_def.can_id == msg_id:
-                return msg_name
-        
-        return ""
+    def get_message_name(self, msg_id: int, bus_number: int = 0) -> str:
+        """Get message name from appropriate network's SYM parser"""
+        return MessageDecoder.get_message_name(msg_id, bus_number, self.network_manager)
         
     def add_message_line(self, msg, line_text):
         """Add a message line with associated message data"""
@@ -60,12 +61,12 @@ class LogTextWidget(QTextEdit):
     def mouseMoveEvent(self, event):
         """Handle mouse move for hover tooltips"""
         try:
-            if self.sym_parser and self.messages:
+            if self.network_manager and self.messages:
                 cursor = self.cursorForPosition(event.pos())
                 line_number = cursor.blockNumber()
                 
-                # Adjust for header lines
-                message_index = line_number - self.header_lines
+                # Adjust for header lines (subtract 1 more to fix off-by-1 issue)
+                message_index = line_number - self.header_lines - 1
                 
                 # Debug info (uncomment to troubleshoot)
                 # print(f"Tooltip debug - Line: {line_number}, Message index: {message_index}, Total messages: {len(self.messages)}")
@@ -76,7 +77,10 @@ class LogTextWidget(QTextEdit):
                     if decoded and decoded.strip():
                         # Use simple plain text tooltip for maximum compatibility
                         self.setToolTip(decoded)
-                        return
+                    else:
+                        # Fallback tooltip if decoding fails
+                        self.setToolTip(f"Message ID: 0x{msg.arbitration_id:X}\\nBus: {msg.bus_number}")
+                    return
                         
             # Clear tooltip if no message or no decoding
             self.setToolTip("")
@@ -98,48 +102,21 @@ class LogTextWidget(QTextEdit):
         
     def decode_message_for_tooltip(self, msg):
         """Decode message for tooltip display"""
-        if not self.sym_parser or not self.sym_parser.messages:
+        sym_parser = self.get_symbol_parser_for_message(msg)
+        if not sym_parser or not sym_parser.messages:
             # Return basic info if no SYM file
-            return f"ID: 0x{msg.arbitration_id:X}\nData: {' '.join(f'{b:02X}' for b in msg.data)}\nNo SYM file loaded"
+            return f"ID: 0x{msg.arbitration_id:X}\nData: {' '.join(f'{b:02X}' for b in msg.data)}\nNo SYM file loaded for bus {msg.bus_number}"
             
         # Find matching message definition
-        for msg_name, msg_def in self.sym_parser.messages.items():
+        for msg_name, msg_def in sym_parser.messages.items():
             if msg_def.can_id == msg.arbitration_id:
                 decoded_lines = [f"Message: {msg_name} (0x{msg.arbitration_id:X})"]
                 decoded_lines.append("")  # Empty line for spacing
                 
-                # Decode each variable
-                for var in msg_def.variables:
-                    if var.start_bit + var.bit_length <= len(msg.data) * 8:
-                        # Extract bits (simplified)
-                        start_byte = var.start_bit // 8
-                        end_byte = (var.start_bit + var.bit_length - 1) // 8 + 1
-                        
-                        if end_byte <= len(msg.data):
-                            raw_bytes = msg.data[start_byte:end_byte]
-                            raw_value = int.from_bytes(raw_bytes, byteorder='little')
-                            
-                            # Apply bit masking
-                            if var.start_bit % 8 != 0 or var.bit_length % 8 != 0:
-                                bit_offset = var.start_bit % 8
-                                mask = (1 << var.bit_length) - 1
-                                raw_value = (raw_value >> bit_offset) & mask
-                            
-                            # Apply scaling
-                            scaled_value = raw_value * var.factor + var.offset
-                            unit_str = f" {var.unit}" if var.unit else ""
-                            
-                            # Handle enum values
-                            if var.enum_name and var.enum_name in self.sym_parser.enums:
-                                enum = self.sym_parser.enums[var.enum_name]
-                                if int(scaled_value) in enum.values:
-                                    value_str = enum.values[int(scaled_value)]
-                                else:
-                                    value_str = f"{scaled_value:.2f}{unit_str}"
-                            else:
-                                value_str = f"{scaled_value:.2f}{unit_str}"
-                            
-                            decoded_lines.append(f"  {var.name}: {value_str}")
+                # Use shared decoder
+                signals = MessageDecoder.decode_message_signals(msg, sym_parser)
+                for signal_name, signal_value in signals:
+                    decoded_lines.append(f"  {signal_name}: {signal_value}")
                 
                 if len(decoded_lines) > 2:  # More than just header and empty line
                     return "\n".join(decoded_lines)
@@ -148,6 +125,7 @@ class LogTextWidget(QTextEdit):
         
         # Unknown message
         return f"Unknown Message\nID: 0x{msg.arbitration_id:X}\nData: {' '.join(f'{b:02X}' for b in msg.data)}"
+    
 
 
 class LogWriter(QThread):
@@ -455,27 +433,28 @@ class LogReader(QThread):
                 continue
                 
             # Parse data line
-            # Format: MessageNum TimeOffset Type Bus ID Direction - DLC Data...
+            # Actual format: MessageNum) TimeOffset Bus Direction ID - DLC Data...
             try:
                 parts = line.split()
-                if len(parts) < 8:
+                if len(parts) < 7:
                     continue
                     
-                msg_num = int(parts[0])
+                # Handle message number with potential closing parenthesis
+                msg_num_str = parts[0].rstrip(')')  # Remove trailing parenthesis if present
+                msg_num = int(msg_num_str)
                 time_offset_ms = float(parts[1])
-                msg_type = parts[2]  # Usually 'DT' for data
-                bus = int(parts[3])
+                bus = int(parts[2])
+                direction = parts[3]  # 'Rx' or 'Tx'
                 msg_id_hex = parts[4]
-                direction = parts[5]  # 'Rx' or 'Tx'
-                # parts[6] is usually '-'
-                dlc = int(parts[7])
+                # parts[5] is usually '-'
+                dlc = int(parts[6])
                 
                 # Parse message ID
                 msg_id = int(msg_id_hex, 16)
                 
-                # Parse data bytes
+                # Parse data bytes (starting from index 7 now)
                 data_bytes = []
-                for j in range(8, min(8 + dlc, len(parts))):
+                for j in range(7, min(7 + dlc, len(parts))):
                     if j < len(parts):
                         data_bytes.append(int(parts[j], 16))
                         
@@ -496,13 +475,15 @@ class LogReader(QThread):
                     is_remote_frame=False,
                     is_error_frame=False,
                     channel=f'bus{bus}',
-                    direction='rx' if direction.upper() == 'RX' else 'tx'
+                    direction='rx' if direction.upper() == 'RX' else 'tx',
+                    bus_number=bus  # Set the bus number from the TRC file
                 )
                 
                 self.messages.append(msg)
                 self.message_loaded.emit(msg)
                 
                 message_count += 1
+                
                 
                 # Update progress every 100 messages
                 if message_count % 100 == 0:
@@ -591,7 +572,7 @@ class LoggingTab(QWidget):
         playback_layout = QVBoxLayout(playback_group)
         
         # Create custom text widget with hover tooltips
-        self.playback_text = LogTextWidget()
+        self.playback_text = LogTextWidget(self.network_manager)
         self.playback_text.setFont(QFont("Courier", 10))  # Use Courier for better column alignment
         self.playback_text.setReadOnly(True)
         self.playback_text.setStyleSheet("""
@@ -629,6 +610,11 @@ class LoggingTab(QWidget):
         
         stats_layout.addLayout(stats_row1)
         
+        # Symbol file status
+        self.sym_status_label = QLabel("Using network-assigned symbol files")
+        self.sym_status_label.setStyleSheet("color: #666666; font-style: italic;")
+        stats_layout.addWidget(self.sym_status_label)
+        
         # Progress bar
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
@@ -641,9 +627,8 @@ class LoggingTab(QWidget):
         self.update_timer.timeout.connect(self.update_statistics)
         self.update_timer.start(1000)
         
-    def setup_connections(self):
-        """Set up signal connections"""
-        # These connections are handled by the other setup_connections method
+        # Initial symbol status update
+        self.update_symbol_status()
         
     def start_logging(self):
         """Start logging CAN messages"""
@@ -735,7 +720,7 @@ class LoggingTab(QWidget):
         if filename:
             # Start background load
             self.log_reader = LogReader(filename)
-            self.log_reader.progress_updated.connect(self.progress_bar.setValue)
+            self.log_reader.progress_updated.connect(self.on_load_progress)
             self.log_reader.message_loaded.connect(self.on_playback_message_loaded)
             self.log_reader.finished.connect(self.on_load_finished)
             self.log_reader.error_occurred.connect(self.on_load_error)
@@ -893,6 +878,9 @@ class LoggingTab(QWidget):
             estimated_size = len(self.logged_messages) * avg_msg_size / (1024 * 1024)
             self.file_size_label.setText(f"Size: {estimated_size:.1f} MB")
             
+        # Update symbol status periodically
+        self.update_symbol_status()
+            
     def open_log(self):
         """Open an existing log file"""
         filename, _ = QFileDialog.getOpenFileName(
@@ -928,50 +916,112 @@ class LoggingTab(QWidget):
         """Handle message loaded from file for playback"""
         self.playback_messages.append(msg)
         
-        # Format message for text display with distinct columns and message name
-        msg_num = len(self.playback_messages)
+        # Don't update UI during loading - just store messages
+        # UI will be updated when loading is complete
         
-        # For loaded files, timestamps are already relative or need to be made relative
-        if len(self.playback_messages) == 1:
-            # First message sets the baseline for relative timing
-            self.playback_start_time = msg.timestamp
-            time_str = "0.0000"
-        else:
-            # Calculate relative time from first message
-            relative_time = msg.timestamp - self.playback_start_time
-            time_str = f"{relative_time:.4f}"
+    def populate_playback_display(self):
+        """Populate the playback display with a subset of loaded messages"""
+        if not self.playback_messages:
+            return
             
-        id_str = f"0x{msg.arbitration_id:06X}"
-        data_str = " ".join(f"{b:02X}" for b in msg.data)
-        direction_str = msg.direction.upper()
+        # Clear existing display
+        self.playback_text.clear_messages()
         
-        # Get message name from SYM parser
-        message_name = self.playback_text.get_message_name(msg.arbitration_id)
-        name_str = message_name[:30] if message_name else ""  # Much wider - 30 chars for full names
+        # Set baseline timing from first message
+        self.playback_start_time = self.playback_messages[0].timestamp
         
-        # Create line with proper column alignment including message name
-        line_text = f"{msg_num:4d} {time_str:16s} {msg.bus_number:3d}  {id_str:9s} {name_str:30s} {direction_str:3s} Data {len(msg.data):2d}  {data_str}"
+        # For large files, show first 1000 messages + every 100th message after that
+        messages_to_display = []
         
-        # Add to text widget
-        self.playback_text.add_message_line(msg, line_text)
+        for i, msg in enumerate(self.playback_messages):
+            if i < 1000 or i % 100 == 0:
+                messages_to_display.append((i, msg))
+                
+        # Populate display efficiently
+        for msg_index, msg in messages_to_display:
+            # Calculate relative time
+            relative_time = msg.timestamp - self.playback_start_time
+            time_str = f"{relative_time:.4f}" if msg_index > 0 else "0.0000"
+            
+            id_str = f"0x{msg.arbitration_id:06X}"
+            data_str = " ".join(f"{b:02X}" for b in msg.data)
+            direction_str = msg.direction.upper()
+            
+            # Get message name from SYM parser
+            message_name = self.playback_text.get_message_name(msg.arbitration_id, msg.bus_number)
+            name_str = message_name[:30] if message_name else ""
+            
+            # Create line with proper column alignment
+            line_text = f"{msg_index+1:4d} {time_str:16s} {msg.bus_number:3d}  {id_str:9s} {name_str:30s} {direction_str:3s} Data {len(msg.data):2d}  {data_str}"
+            
+            # Add to text widget
+            self.playback_text.add_message_line(msg, line_text)
+            
+        # Update status
+        total_messages = len(self.playback_messages)
+        displayed_messages = len(messages_to_display)
+        self.playback_file_label.setText(f"File: {total_messages:,} messages ({displayed_messages:,} displayed)")
         
     def on_load_progress(self, progress):
         """Handle load progress updates"""
-        self.log_status_label.setText(f"Loading... {progress} messages")
+        # Show progress as both message count and percentage estimate
+        self.log_status_label.setText(f"Loading... {progress:,} messages")
+        
+        # Update progress bar (rough estimate based on file size)
+        # For very large files, this gives visual feedback
+        if hasattr(self, 'log_reader') and self.log_reader:
+            # Estimate progress - this is rough but gives user feedback
+            estimated_total = max(progress * 2, 100000)  # Rough estimate
+            percentage = min(int((progress / estimated_total) * 100), 99)
+            self.progress_bar.setValue(percentage)
         
     def on_load_finished(self, result):
         """Handle load completion"""
-        self.log_status_label.setText(f"Loaded {len(self.playback_messages)} messages")
-        QMessageBox.information(self, "Success", f"Loaded {len(self.playback_messages)} messages from log file")
+        # Now populate the UI with a subset of messages for display
+        self.populate_playback_display()
+        
+        # Complete the progress bar
+        self.progress_bar.setValue(100)
+        self.progress_bar.setVisible(False)
+        
+        self.log_status_label.setText(f"Loaded {len(self.playback_messages):,} messages")
+        QMessageBox.information(self, "Success", f"Loaded {len(self.playback_messages):,} messages from log file")
         
     def on_load_error(self, error):
         """Handle load error"""
         self.log_status_label.setText("Load failed")
         QMessageBox.critical(self, "Error", f"Failed to load log file: {error}")
         
-    def set_sym_parser(self, parser):
-        """Set SYM parser for message decoding in tooltips"""
-        self.playback_text.set_sym_parser(parser)
+    def update_symbol_status(self):
+        """Update symbol file status based on network assignments"""
+        networks = self.network_manager.get_all_networks()
+        sym_files = []
+        
+        for network in networks.values():
+            if network.config.symbol_file_path:
+                import os
+                filename = os.path.basename(network.config.symbol_file_path)
+                sym_files.append(f"Bus {network.config.bus_number}: {filename}")
+        
+        if sym_files:
+            status_text = "Symbol files: " + ", ".join(sym_files)
+            # Create status label if it doesn't exist
+            if not hasattr(self, 'sym_status_label'):
+                # Add it to the statistics group
+                stats_group = self.findChild(QGroupBox, "Statistics")
+                if stats_group:
+                    layout = stats_group.layout()
+                    if layout:
+                        self.sym_status_label = QLabel()
+                        layout.addWidget(self.sym_status_label)
+            
+            if hasattr(self, 'sym_status_label'):
+                self.sym_status_label.setText(status_text)
+                self.sym_status_label.setStyleSheet("color: #666666; font-weight: bold;")
+        else:
+            if hasattr(self, 'sym_status_label'):
+                self.sym_status_label.setText("Using network-assigned symbol files")
+                self.sym_status_label.setStyleSheet("color: #666666; font-style: italic;")
         
     def setup_connections(self):
         """Set up signal connections"""
@@ -1016,7 +1066,7 @@ class LoggingTab(QWidget):
         direction_str = msg.direction.upper()
         
         # Get message name from SYM parser
-        message_name = self.playback_text.get_message_name(msg.arbitration_id)
+        message_name = self.playback_text.get_message_name(msg.arbitration_id, msg.bus_number)
         name_str = message_name[:30] if message_name else ""  # Much wider - 30 chars for full names
         
         # Create line with proper column alignment including bus number and message name

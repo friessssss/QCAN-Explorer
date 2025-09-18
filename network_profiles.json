@@ -1,9 +1,9 @@
 {
   "bf6dae39-93ce-43d0-8f27-4007a5ef4357": {
     "network_id": "bf6dae39-93ce-43d0-8f27-4007a5ef4357",
-    "name": "Bus 1 - Powertrain CAN",
+    "name": "Bus 1 - PS-CAN",
     "description": "",
-    "bus_number": 1,
+    "bus_number": 3,
     "bitrate": 500000,
     "sample_point": 0.75,
     "protocol": "CAN 2.0B",
@@ -12,12 +12,12 @@
     "auto_reconnect": true,
     "reconnect_delay": 5,
     "message_filters": [],
-    "symbol_file_path": "/Users/zachrobertson/Developer/QCAN Explorer/examples/sym/virtual_can_network.sym",
-    "last_hardware_interface": "virtual:virtual0"
+    "symbol_file_path": "C:/Users/zachr/Downloads/vehicle-package-LS-AE.1-05_rc-20250815-103721/RELEASE_PACKAGE__TOOLS_1.1.0.0/SymbolFiles/L1_PS-CAN_Beta2.sym",
+    "last_hardware_interface": "pcan:PCAN_USBBUS1"
   },
   "1b2b3417-a0d9-42bc-ab2e-94d49879b36e": {
     "network_id": "1b2b3417-a0d9-42bc-ab2e-94d49879b36e",
-    "name": "Bus 2 - Body CAN",
+    "name": "Bus 2 - Drive-CAN",
     "description": "",
     "bus_number": 2,
     "bitrate": 250000,
@@ -33,9 +33,9 @@
   },
   "dd5a7a14-c326-4364-b888-34aaad9e5056": {
     "network_id": "dd5a7a14-c326-4364-b888-34aaad9e5056",
-    "name": "Bus 3 - Diagnostic CAN",
+    "name": "Bus 3 - Vehicle-CAN",
     "description": "",
-    "bus_number": 3,
+    "bus_number": 1,
     "bitrate": 500000,
     "sample_point": 0.75,
     "protocol": "CAN 2.0B",
@@ -44,7 +44,7 @@
     "auto_reconnect": true,
     "reconnect_delay": 5,
     "message_filters": [],
-    "symbol_file_path": "examples/sym/virtual_can_network.sym",
-    "last_hardware_interface": "virtual:virtual2"
+    "symbol_file_path": "C:/Users/zachr/Downloads/vehicle-package-LS-AE.1-05_rc-20250815-103721/RELEASE_PACKAGE__TOOLS_1.1.0.0/SymbolFiles/L1_Vehicle-CAN_Beta2.sym",
+    "last_hardware_interface": "pcan:PCAN_USBBUS1"
   }
 }

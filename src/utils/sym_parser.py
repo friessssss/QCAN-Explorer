@@ -255,6 +255,7 @@ class SymParser:
                     id_match = re.search(r'ID=([0-9A-Fa-f]+)h?', line)
                     if id_match:
                         message.can_id = int(id_match.group(1), 16)
+                        print(f"Parsed message {name}: ID={id_match.group(1)} -> 0x{message.can_id:X}")
                         
                 elif line.startswith('Len='):
                     len_match = re.search(r'Len=(\d+)', line)
