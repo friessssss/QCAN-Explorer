@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLa
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot, pyqtSignal
 from PyQt6.QtGui import QFont, QColor
 
-from canbus.interface_manager import CANInterfaceManager
+# Network manager will be passed in constructor
 from canbus.messages import CANMessage
 from utils.sym_parser import SymParser
 
@@ -56,7 +56,7 @@ class SignalSelectionDialog(QDialog):
         
         # Selection info
         self.selection_label = QLabel("0 signals selected")
-        self.selection_label.setStyleSheet("font-weight: bold; color: #2980b9;")
+        self.selection_label.setStyleSheet("font-weight: bold; color: #666666;")
         layout.addWidget(self.selection_label)
         
         # Buttons
@@ -229,9 +229,9 @@ class SignalSelectionWidget(QTreeWidget):
 class PlottingTab(QWidget):
     """Real-time signal plotting and analysis tab"""
     
-    def __init__(self, can_manager: CANInterfaceManager):
+    def __init__(self, network_manager):
         super().__init__()
-        self.can_manager = can_manager
+        self.network_manager = network_manager
         self.sym_parser = None
         self.setup_ui()
         self.setup_connections()
@@ -306,7 +306,7 @@ class PlottingTab(QWidget):
         
         self.select_signals_btn = QPushButton("Select Signals to Plot")
         self.select_signals_btn.clicked.connect(self.open_signal_selection)
-        self.select_signals_btn.setStyleSheet("background-color: #3498db; color: white; font-weight: bold; padding: 8px;")
+        self.select_signals_btn.setStyleSheet("background-color: #777777; color: white; font-weight: bold; padding: 8px;")
         signal_controls.addWidget(self.select_signals_btn)
         
         self.selected_signals_label = QLabel("No signals selected")
@@ -371,7 +371,7 @@ class PlottingTab(QWidget):
     def setup_connections(self):
         """Set up signal connections"""
         # Connect to CAN manager for real-time data
-        self.can_manager.message_received.connect(self.on_message_received, Qt.ConnectionType.QueuedConnection)
+        self.network_manager.message_received.connect(self.on_message_received, Qt.ConnectionType.QueuedConnection)
         
     def set_sym_parser(self, parser: SymParser):
         """Set SYM parser for signal definitions"""
@@ -485,8 +485,8 @@ class PlottingTab(QWidget):
                 
         self.update_stats()
         
-    @pyqtSlot(object)
-    def on_message_received(self, msg: CANMessage):
+    @pyqtSlot(str, object)
+    def on_message_received(self, network_id: str, msg: CANMessage):
         """Handle received CAN message for plotting"""
         if not self.is_recording or not self.sym_parser:
             return
@@ -721,7 +721,7 @@ class PlottingTab(QWidget):
         
         # Update status
         self.sym_status_label.setText(f"Trace loaded: {message_count} messages")
-        self.sym_status_label.setStyleSheet("color: blue; font-weight: bold;")
+        self.sym_status_label.setStyleSheet("color: #666666; font-weight: bold;")
         
         # Process all messages to populate selected signals
         if self.signals and self.trace_messages:

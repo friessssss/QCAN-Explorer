@@ -11,7 +11,7 @@ from PyQt6.QtGui import QFont, QColor
 import json
 import time
 
-from canbus.interface_manager import CANInterfaceManager
+# Network manager will be passed in constructor
 
 
 class TransmitListWidget(QTableWidget):
@@ -142,9 +142,9 @@ class TransmitListWidget(QTableWidget):
 class TransmitTab(QWidget):
     """CAN message transmission tab"""
     
-    def __init__(self, can_manager: CANInterfaceManager):
+    def __init__(self, network_manager):
         super().__init__()
-        self.can_manager = can_manager
+        self.network_manager = network_manager
         self.setup_ui()
         self.setup_connections()
         
@@ -162,6 +162,11 @@ class TransmitTab(QWidget):
         
         # Message input fields
         input_layout = QHBoxLayout()
+        
+        input_layout.addWidget(QLabel("Bus:"))
+        self.bus_combo = QComboBox()
+        self.bus_combo.setMaximumWidth(80)
+        input_layout.addWidget(self.bus_combo)
         
         input_layout.addWidget(QLabel("ID:"))
         self.id_edit = QLineEdit("0x123")
@@ -262,14 +267,46 @@ class TransmitTab(QWidget):
         
     def setup_connections(self):
         """Set up signal connections"""
-        self.can_manager.message_transmitted.connect(self.on_message_transmitted)
-        self.can_manager.error_occurred.connect(self.on_error_occurred)
-        self.can_manager.connection_changed.connect(self.on_connection_changed)
+        self.network_manager.message_transmitted.connect(self.on_message_transmitted)
+        self.network_manager.error_occurred.connect(self.on_error_occurred)
+        self.network_manager.network_state_changed.connect(self.on_network_state_changed)
+        
+        # Update bus combo when networks change
+        self.network_manager.network_added.connect(self.update_bus_combo)
+        self.network_manager.network_removed.connect(self.update_bus_combo)
+        
+        # Initial bus combo update
+        self.update_bus_combo()
+        
+    def update_bus_combo(self, network_id=None):
+        """Update the bus selection combo box"""
+        current_bus = self.bus_combo.currentData()
+        self.bus_combo.clear()
+        
+        # Add available networks
+        networks = self.network_manager.get_all_networks()
+        connected_networks = [(net.config.bus_number, net.config.name, network_id) 
+                             for network_id, net in networks.items() if net.is_connected()]
+        
+        if connected_networks:
+            connected_networks.sort()  # Sort by bus number
+            for bus_num, name, net_id in connected_networks:
+                self.bus_combo.addItem(f"Bus {bus_num} - {name}", net_id)
+        else:
+            self.bus_combo.addItem("No networks connected", None)
+            
+        # Restore selection if possible
+        if current_bus:
+            index = self.bus_combo.findData(current_bus)
+            if index >= 0:
+                self.bus_combo.setCurrentIndex(index)
         
     def send_manual_message(self):
         """Send a single manual message"""
-        if not self.can_manager.is_connected():
-            QMessageBox.warning(self, "Warning", "Not connected to CAN interface")
+        # Get selected network
+        network_id = self.bus_combo.currentData()
+        if not network_id:
+            QMessageBox.warning(self, "Warning", "No network selected or connected")
             return
             
         try:
@@ -278,8 +315,9 @@ class TransmitTab(QWidget):
             if msg_data is None:
                 return
                 
-            # Send message
-            success = self.can_manager.send_message(
+            # Send message on selected network
+            success = self.network_manager.send_message(
+                network_id,
                 msg_data['id'], 
                 msg_data['data'], 
                 msg_data['is_extended']
@@ -293,8 +331,9 @@ class TransmitTab(QWidget):
             
     def send_repeat_message(self):
         """Send a message multiple times"""
-        if not self.can_manager.is_connected():
-            QMessageBox.warning(self, "Warning", "Not connected to CAN interface")
+        network_id = self.bus_combo.currentData()
+        if not network_id:
+            QMessageBox.warning(self, "Warning", "No network selected or connected")
             return
             
         try:
@@ -305,7 +344,8 @@ class TransmitTab(QWidget):
             repeat_count = self.repeat_spin.value()
             
             for i in range(repeat_count):
-                success = self.can_manager.send_message(
+                success = self.network_manager.send_message(
+                    network_id,
                     msg_data['id'], 
                     msg_data['data'], 
                     msg_data['is_extended']
@@ -371,19 +411,24 @@ class TransmitTab(QWidget):
         
     def start_periodic_transmission(self):
         """Start periodic transmission of enabled messages"""
-        if not self.can_manager.is_connected():
-            QMessageBox.warning(self, "Warning", "Not connected to CAN interface")
+        # Check if any networks are connected
+        connected_networks = [n for n in self.network_manager.get_all_networks().values() if n.is_connected()]
+        if not connected_networks:
+            QMessageBox.warning(self, "Warning", "No networks connected")
             return
             
-        # Clear existing periodic tasks
-        self.can_manager.periodic_tasks.clear()
+        # Clear existing periodic tasks from all networks
+        for network in connected_networks:
+            network.periodic_tasks.clear()
         
         # Add enabled messages to periodic tasks
         enabled_count = 0
         for row in range(self.transmit_table.rowCount()):
             msg_data = self.transmit_table.get_message_data(row)
             if msg_data and msg_data['enabled'] and msg_data['period'] > 0:
-                self.can_manager.add_periodic_message(
+                # Add to first connected network for now
+                # TODO: Allow user to select which network for periodic messages
+                connected_networks[0].add_periodic_message(
                     msg_data['id'],
                     msg_data['data'],
                     msg_data['period'],
@@ -406,7 +451,9 @@ class TransmitTab(QWidget):
     def stop_periodic_transmission(self):
         """Stop periodic transmission"""
         self.periodic_timer.stop()
-        self.can_manager.periodic_tasks.clear()
+        # Clear periodic tasks from all networks
+        for network in self.network_manager.get_all_networks().values():
+            network.periodic_tasks.clear()
         
         # Update UI
         self.start_periodic_btn.setEnabled(True)
@@ -491,8 +538,8 @@ class TransmitTab(QWidget):
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to save file: {str(e)}")
                 
-    @pyqtSlot(object)
-    def on_message_transmitted(self, msg):
+    @pyqtSlot(str, object)
+    def on_message_transmitted(self, network_id: str, msg):
         """Handle transmitted message"""
         # Update count in table if it's a periodic message
         for row in range(self.transmit_table.rowCount()):
@@ -504,26 +551,36 @@ class TransmitTab(QWidget):
                     count_item.setText(str(current_count + 1))
                 break
                 
-    @pyqtSlot(str)
-    def on_error_occurred(self, error_msg):
+    @pyqtSlot(str, str)
+    def on_error_occurred(self, network_id: str, error_msg: str):
         """Handle transmission errors"""
         # Could display error in status or log
         pass
         
-    @pyqtSlot(bool)
-    def on_connection_changed(self, connected):
-        """Handle connection state changes"""
-        self.send_once_btn.setEnabled(connected)
-        self.send_repeat_btn.setEnabled(connected)
+    @pyqtSlot(str, object)
+    def on_network_state_changed(self, network_id: str, state):
+        """Handle network state changes"""
+        # Update UI based on available networks
+        self.update_bus_combo()
         
-        if not connected and self.periodic_timer.isActive():
+        # Enable/disable controls based on network availability
+        has_networks = len([n for n in self.network_manager.get_all_networks().values() if n.is_connected()]) > 0
+        self.send_once_btn.setEnabled(has_networks)
+        self.send_repeat_btn.setEnabled(has_networks)
+        
+        if not has_networks and self.periodic_timer.isActive():
             self.stop_periodic_transmission()
             
     def update_statistics(self):
         """Update transmission statistics"""
-        stats = self.can_manager.get_statistics()
-        tx_count = stats.get('tx_count', 0)
-        error_count = stats.get('error_count', 0)
+        # Get combined stats from all networks
+        total_tx = 0
+        total_errors = 0
         
-        self.tx_count_label.setText(f"Transmitted: {tx_count}")
-        self.error_count_label.setText(f"Errors: {error_count}")
+        for network in self.network_manager.get_all_networks().values():
+            stats = network.get_statistics()
+            total_tx += stats.get('tx_count', 0)
+            total_errors += stats.get('error_count', 0)
+        
+        self.tx_count_label.setText(f"Transmitted: {total_tx}")
+        self.error_count_label.setText(f"Errors: {total_errors}")

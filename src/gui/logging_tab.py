@@ -16,7 +16,6 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QColor
 
-from canbus.interface_manager import CANInterfaceManager
 from canbus.messages import CANMessage
 
 
@@ -54,8 +53,8 @@ class LogTextWidget(QTextEdit):
         """Clear all messages but keep header"""
         self.messages.clear()
         # Reset to header only
-        header_text = "  #    Time (rel.)         ID        Message Name                     Dir Type DLC  Data (hex.)\n"
-        header_text += "-" * 125 + "\n"
+        header_text = "  #    Time (rel.)       Bus  ID        Message Name                     Dir Type DLC  Data (hex.)\n"
+        header_text += "-" * 135 + "\n"
         self.setPlainText(header_text)
         
     def mouseMoveEvent(self, event):
@@ -517,9 +516,9 @@ class LogReader(QThread):
 class LoggingTab(QWidget):
     """Data logging and playback tab"""
     
-    def __init__(self, can_manager: CANInterfaceManager):
+    def __init__(self, network_manager):
         super().__init__()
-        self.can_manager = can_manager
+        self.network_manager = network_manager
         self.setup_ui()
         self.setup_connections()
         
@@ -600,14 +599,14 @@ class LoggingTab(QWidget):
                 background-color: white;
                 color: black;
                 border: 1px solid gray;
-                selection-background-color: #3399ff;
+                selection-background-color: #888888;
                 line-height: 1.2;
             }
         """)
         
-        # Add column header with significantly wider message name column
-        header_text = "  #    Time (rel.)         ID        Message Name                     Dir Type DLC  Data (hex.)\n"
-        header_text += "-" * 125 + "\n"
+        # Add column header with bus number and wider message name column
+        header_text = "  #    Time (rel.)       Bus  ID        Message Name                     Dir Type DLC  Data (hex.)\n"
+        header_text += "-" * 135 + "\n"
         self.playback_text.setPlainText(header_text)
         playback_layout.addWidget(self.playback_text)
         
@@ -644,14 +643,14 @@ class LoggingTab(QWidget):
         
     def setup_connections(self):
         """Set up signal connections"""
-        self.can_manager.message_received.connect(self.on_message_received)
-        self.can_manager.message_transmitted.connect(self.on_message_transmitted)
-        self.can_manager.connection_changed.connect(self.on_connection_changed)
+        # These connections are handled by the other setup_connections method
         
     def start_logging(self):
         """Start logging CAN messages"""
-        if not self.can_manager.is_connected():
-            QMessageBox.warning(self, "Warning", "Not connected to CAN interface")
+        # Check if any networks are connected
+        connected_networks = [n for n in self.network_manager.get_all_networks().values() if n.is_connected()]
+        if not connected_networks:
+            QMessageBox.warning(self, "Warning", "No networks connected")
             return
             
         self.is_logging = True
@@ -756,8 +755,10 @@ class LoggingTab(QWidget):
             QMessageBox.information(self, "Info", "No playback file loaded")
             return
             
-        if not self.can_manager.is_connected():
-            QMessageBox.warning(self, "Warning", "Not connected to CAN interface")
+        # Check if any networks are connected for playback
+        connected_networks = [n for n in self.network_manager.get_all_networks().values() if n.is_connected()]
+        if not connected_networks:
+            QMessageBox.warning(self, "Warning", "No networks connected for playback")
             return
             
         # Calculate playback interval based on speed
@@ -801,7 +802,10 @@ class LoggingTab(QWidget):
         
         # Send message if it's a TX message or if we're replaying all
         if msg.direction == 'tx':
-            self.can_manager.send_message(msg.arbitration_id, msg.data, msg.is_extended_id)
+            # Send on first available network (could be enhanced to use original bus)
+            connected_networks = [n for n in self.network_manager.get_all_networks().values() if n.is_connected()]
+            if connected_networks:
+                connected_networks[0].send_message(msg.arbitration_id, msg.data, msg.is_extended_id)
             
         self.playback_index += 1
         
@@ -946,7 +950,7 @@ class LoggingTab(QWidget):
         name_str = message_name[:30] if message_name else ""  # Much wider - 30 chars for full names
         
         # Create line with proper column alignment including message name
-        line_text = f"{msg_num:4d} {time_str:18s} {id_str:9s} {name_str:30s} {direction_str:3s} Data {len(msg.data):2d}  {data_str}"
+        line_text = f"{msg_num:4d} {time_str:16s} {msg.bus_number:3d}  {id_str:9s} {name_str:30s} {direction_str:3s} Data {len(msg.data):2d}  {data_str}"
         
         # Add to text widget
         self.playback_text.add_message_line(msg, line_text)
@@ -971,12 +975,12 @@ class LoggingTab(QWidget):
         
     def setup_connections(self):
         """Set up signal connections"""
-        # Connect to CAN manager signals for logging
-        self.can_manager.message_received.connect(self.on_message_received)
-        self.can_manager.message_transmitted.connect(self.on_message_transmitted)
+        # Connect to multi-network manager signals for logging
+        self.network_manager.message_received.connect(self.on_message_received)
+        self.network_manager.message_transmitted.connect(self.on_message_transmitted)
         
-    @pyqtSlot(object)
-    def on_message_received(self, msg):
+    @pyqtSlot(str, object)
+    def on_message_received(self, network_id: str, msg):
         """Handle received CAN message for logging"""
         if self.is_logging:
             self.logged_messages.append(msg)
@@ -985,8 +989,8 @@ class LoggingTab(QWidget):
             # Also display in playback area for real-time view
             self.add_message_to_display(msg)
             
-    @pyqtSlot(object)
-    def on_message_transmitted(self, msg):
+    @pyqtSlot(str, object)
+    def on_message_transmitted(self, network_id: str, msg):
         """Handle transmitted CAN message for logging"""
         if self.is_logging:
             self.logged_messages.append(msg)
@@ -1015,9 +1019,9 @@ class LoggingTab(QWidget):
         message_name = self.playback_text.get_message_name(msg.arbitration_id)
         name_str = message_name[:30] if message_name else ""  # Much wider - 30 chars for full names
         
-        # Create line with proper column alignment including message name
-        # Format: Number  Time            ID        MessageName      Dir Type DLC  Data
-        line_text = f"{msg_num:4d} {time_str:18s} {id_str:9s} {name_str:30s} {direction_str:3s} Data {len(msg.data):2d}  {data_str}"
+        # Create line with proper column alignment including bus number and message name
+        # Format: Number  Time            Bus  ID        MessageName      Dir Type DLC  Data
+        line_text = f"{msg_num:4d} {time_str:16s} {msg.bus_number:3d}  {id_str:9s} {name_str:30s} {direction_str:3s} Data {len(msg.data):2d}  {data_str}"
         
         # Add to text widget
         self.playback_text.add_message_line(msg, line_text)

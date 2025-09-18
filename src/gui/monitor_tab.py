@@ -12,7 +12,6 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot
 from PyQt6.QtGui import QFont, QColor
 
-from canbus.interface_manager import CANInterfaceManager
 from canbus.messages import CANMessage
 from utils.sym_parser import SymParser
 
@@ -26,12 +25,12 @@ class MessageTreeWidget(QTreeWidget):
         self.message_data = []  # Store message data
         self.message_stats = {}  # Track message statistics
         self.sym_parser = None  # SYM parser for decoding
-        self.message_items = {}  # Track tree items by message ID
+        self.message_items = {}  # Track tree items by message key (bus+ID)
         
     def setup_tree(self):
         """Set up the message tree"""
         # Define columns
-        columns = ["Time", "ID", "DLC", "Data", "Direction", "Count", "Period", "Message/Signal"]
+        columns = ["Time", "Bus", "ID", "DLC", "Data", "Direction", "Count", "Period", "Message/Signal"]
         self.setColumnCount(len(columns))
         self.setHeaderLabels(columns)
         
@@ -44,18 +43,20 @@ class MessageTreeWidget(QTreeWidget):
         # Configure column widths
         header = self.header()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # Time
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # ID
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)  # DLC
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # Data
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)  # Direction
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)  # Count
-        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)  # Period
-        header.setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)  # Message/Signal
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)  # Bus
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # ID
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)  # DLC
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)  # Data
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)  # Direction
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)  # Count
+        header.setSectionResizeMode(7, QHeaderView.ResizeMode.Fixed)  # Period
+        header.setSectionResizeMode(8, QHeaderView.ResizeMode.Stretch)  # Message/Signal
         
-        self.setColumnWidth(2, 50)   # DLC
-        self.setColumnWidth(4, 80)   # Direction
-        self.setColumnWidth(5, 60)   # Count
-        self.setColumnWidth(6, 80)   # Period
+        self.setColumnWidth(1, 40)   # Bus
+        self.setColumnWidth(3, 50)   # DLC
+        self.setColumnWidth(5, 80)   # Direction
+        self.setColumnWidth(6, 60)   # Count
+        self.setColumnWidth(7, 80)   # Period
         
         # Set font
         font = QFont("Consolas", 9)
@@ -129,19 +130,20 @@ class MessageTreeWidget(QTreeWidget):
         
     def add_message(self, msg: CANMessage):
         """Add a new CAN message to the tree"""
-        msg_id = msg.arbitration_id
+        # Use combination of bus number and message ID as unique key
+        msg_key = f"bus{msg.bus_number}_id{msg.arbitration_id}"
         current_time = time.time()
         
         # Update statistics
-        if msg_id not in self.message_stats:
-            self.message_stats[msg_id] = {
+        if msg_key not in self.message_stats:
+            self.message_stats[msg_key] = {
                 'count': 0,
                 'last_time': 0,
                 'period': 0,
                 'item': None
             }
             
-        stats = self.message_stats[msg_id]
+        stats = self.message_stats[msg_key]
         stats['count'] += 1
         
         # Calculate period
@@ -166,36 +168,45 @@ class MessageTreeWidget(QTreeWidget):
         time_str = time.strftime("%H:%M:%S.%f", time.localtime(msg.timestamp))[:-3]
         item.setText(0, time_str)
         
+        # Bus number
+        item.setText(1, str(msg.bus_number))
+        if msg.bus_number > 0:
+            # Color code buses for easy identification
+            colors = [QColor(240, 240, 240), QColor(235, 235, 235), QColor(230, 230, 230), 
+                     QColor(245, 245, 245), QColor(225, 225, 225), QColor(250, 250, 250)]
+            color = colors[(msg.bus_number - 1) % len(colors)]
+            item.setBackground(1, color)
+        
         # ID (format as hex)
         id_format = f"0x{msg.arbitration_id:08X}" if msg.is_extended_id else f"0x{msg.arbitration_id:03X}"
-        item.setText(1, id_format)
+        item.setText(2, id_format)
         if msg.is_extended_id:
-            item.setBackground(1, QColor(255, 255, 200))  # Light yellow for extended IDs
+            item.setBackground(2, QColor(255, 255, 200))  # Light yellow for extended IDs
         
         # DLC (Data Length Code)
-        item.setText(2, str(len(msg.data)))
+        item.setText(3, str(len(msg.data)))
         
         # Data (format as hex bytes)
         data_str = " ".join(f"{byte:02X}" for byte in msg.data)
-        item.setText(3, data_str)
+        item.setText(4, data_str)
         
         # Direction
-        item.setText(4, msg.direction.upper())
+        item.setText(5, msg.direction.upper())
         if msg.direction == 'tx':
-            item.setBackground(4, QColor(200, 255, 200))  # Light green for TX
+            item.setBackground(5, QColor(200, 255, 200))  # Light green for TX
         else:
-            item.setBackground(4, QColor(200, 200, 255))  # Light blue for RX
+            item.setBackground(5, QColor(200, 200, 255))  # Light blue for RX
         
         # Count
-        item.setText(5, str(stats['count']))
+        item.setText(6, str(stats['count']))
         
         # Period
         period_str = f"{stats['period']:.1f} ms" if stats['period'] > 0 else "-"
-        item.setText(6, period_str)
+        item.setText(7, period_str)
         
         # Message name in the Message/Signal column
         message_name = self.get_message_name(msg.arbitration_id)
-        item.setText(7, message_name)
+        item.setText(8, message_name)
         
         # Update signal children only if the item doesn't have children yet
         # This prevents disrupting the tree structure when just updating values
@@ -235,8 +246,8 @@ class MessageTableWidget(QTableWidget):
         
     def setup_table(self):
         """Set up the message table"""
-        # Define columns - added Decoded Signals column
-        columns = ["Time", "ID", "DLC", "Data", "Direction", "Count", "Period", "Decoded Signals"]
+        # Define columns - added Bus and Decoded Signals columns
+        columns = ["Time", "Bus", "ID", "DLC", "Data", "Direction", "Count", "Period", "Decoded Signals"]
         self.setColumnCount(len(columns))
         self.setHorizontalHeaderLabels(columns)
         
@@ -248,18 +259,20 @@ class MessageTableWidget(QTableWidget):
         # Configure column widths
         header = self.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # Time
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # ID
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)  # DLC
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # Data
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)  # Direction
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)  # Count
-        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)  # Period
-        header.setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)  # Decoded Signals
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)  # Bus
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # ID
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)  # DLC
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)  # Data
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)  # Direction
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)  # Count
+        header.setSectionResizeMode(7, QHeaderView.ResizeMode.Fixed)  # Period
+        header.setSectionResizeMode(8, QHeaderView.ResizeMode.Stretch)  # Decoded Signals
         
-        self.setColumnWidth(2, 50)   # DLC
-        self.setColumnWidth(4, 80)   # Direction
-        self.setColumnWidth(5, 60)   # Count
-        self.setColumnWidth(6, 80)   # Period
+        self.setColumnWidth(1, 40)   # Bus
+        self.setColumnWidth(3, 50)   # DLC
+        self.setColumnWidth(5, 80)   # Direction
+        self.setColumnWidth(6, 60)   # Count
+        self.setColumnWidth(7, 80)   # Period
         
         # Set font
         font = QFont("Consolas", 9)
@@ -322,19 +335,20 @@ class MessageTableWidget(QTableWidget):
         
     def add_message(self, msg: CANMessage):
         """Add a new CAN message to the table"""
-        msg_id = msg.arbitration_id
+        # Use combination of bus number and message ID as unique key
+        msg_key = f"bus{msg.bus_number}_id{msg.arbitration_id}"
         current_time = time.time()
         
         # Update statistics
-        if msg_id not in self.message_stats:
-            self.message_stats[msg_id] = {
+        if msg_key not in self.message_stats:
+            self.message_stats[msg_key] = {
                 'count': 0,
                 'last_time': 0,
                 'period': 0,
                 'row': -1
             }
             
-        stats = self.message_stats[msg_id]
+        stats = self.message_stats[msg_key]
         stats['count'] += 1
         
         # Calculate period
@@ -343,7 +357,7 @@ class MessageTableWidget(QTableWidget):
             stats['period'] = period * 1000  # Convert to milliseconds
         stats['last_time'] = current_time
         
-        # Check if message ID already exists in table
+        # Check if message key already exists in table
         if stats['row'] >= 0 and stats['row'] < self.rowCount():
             # Update existing row
             row = stats['row']
@@ -361,19 +375,29 @@ class MessageTableWidget(QTableWidget):
         time_str = time.strftime("%H:%M:%S.%f", time.localtime(msg.timestamp))[:-3]
         self.setItem(row, 0, QTableWidgetItem(time_str))
         
+        # Bus number
+        bus_item = QTableWidgetItem(str(msg.bus_number))
+        if msg.bus_number > 0:
+            # Color code buses for easy identification
+            colors = [QColor(240, 240, 240), QColor(235, 235, 235), QColor(230, 230, 230), 
+                     QColor(245, 245, 245), QColor(225, 225, 225), QColor(250, 250, 250)]
+            color = colors[(msg.bus_number - 1) % len(colors)]
+            bus_item.setBackground(color)
+        self.setItem(row, 1, bus_item)
+        
         # ID (format as hex)
         id_format = f"0x{msg.arbitration_id:08X}" if msg.is_extended_id else f"0x{msg.arbitration_id:03X}"
         id_item = QTableWidgetItem(id_format)
         if msg.is_extended_id:
             id_item.setBackground(QColor(255, 255, 200))  # Light yellow for extended IDs
-        self.setItem(row, 1, id_item)
+        self.setItem(row, 2, id_item)
         
         # DLC (Data Length Code)
-        self.setItem(row, 2, QTableWidgetItem(str(len(msg.data))))
+        self.setItem(row, 3, QTableWidgetItem(str(len(msg.data))))
         
         # Data (format as hex bytes)
         data_str = " ".join(f"{byte:02X}" for byte in msg.data)
-        self.setItem(row, 3, QTableWidgetItem(data_str))
+        self.setItem(row, 4, QTableWidgetItem(data_str))
         
         # Direction
         direction_item = QTableWidgetItem(msg.direction.upper())
@@ -381,20 +405,20 @@ class MessageTableWidget(QTableWidget):
             direction_item.setBackground(QColor(200, 255, 200))  # Light green for TX
         else:
             direction_item.setBackground(QColor(200, 200, 255))  # Light blue for RX
-        self.setItem(row, 4, direction_item)
+        self.setItem(row, 5, direction_item)
         
         # Count
-        self.setItem(row, 5, QTableWidgetItem(str(stats['count'])))
+        self.setItem(row, 6, QTableWidgetItem(str(stats['count'])))
         
         # Period
         period_str = f"{stats['period']:.1f} ms" if stats['period'] > 0 else "-"
-        self.setItem(row, 6, QTableWidgetItem(period_str))
+        self.setItem(row, 7, QTableWidgetItem(period_str))
         
         # Decoded Signals
         decoded_text = self.decode_message(msg)
         decoded_item = QTableWidgetItem(decoded_text)
         decoded_item.setToolTip(decoded_text)  # Show full text in tooltip
-        self.setItem(row, 7, decoded_item)
+        self.setItem(row, 8, decoded_item)
         
     def clear_messages(self):
         """Clear all messages from the table"""
@@ -406,15 +430,16 @@ class MessageTableWidget(QTableWidget):
 class MonitorTab(QWidget):
     """CAN message monitoring tab"""
     
-    def __init__(self, can_manager: CANInterfaceManager):
+    def __init__(self, network_manager):
         super().__init__()
-        self.can_manager = can_manager
+        self.network_manager = network_manager
         self.setup_ui()
         self.setup_connections()
         
         # Auto-scroll and update settings
         self.auto_scroll = True
         self.max_messages = 1000
+        self.monitoring_active = False
         
     def setup_ui(self):
         """Set up the monitor tab UI"""
@@ -479,7 +504,7 @@ class MonitorTab(QWidget):
         symbol_layout.addWidget(QLabel("|"))  # Separator
         
         self.sym_file_label = QLabel("No SYM file loaded")
-        self.sym_file_label.setStyleSheet("color: gray; font-style: italic;")
+        self.sym_file_label.setStyleSheet("color: #666666; font-style: italic;")
         symbol_layout.addWidget(self.sym_file_label)
         
         symbol_layout.addStretch()
@@ -563,14 +588,14 @@ class MonitorTab(QWidget):
         """Set up signal connections"""
         # Use QueuedConnection for thread-safe signal handling
         from PyQt6.QtCore import Qt
-        self.can_manager.message_received.connect(self.on_message_received, Qt.ConnectionType.QueuedConnection)
-        self.can_manager.message_transmitted.connect(self.on_message_transmitted, Qt.ConnectionType.QueuedConnection)
-        self.can_manager.connection_changed.connect(self.on_connection_changed, Qt.ConnectionType.QueuedConnection)
+        self.network_manager.message_received.connect(self.on_message_received, Qt.ConnectionType.QueuedConnection)
+        self.network_manager.message_transmitted.connect(self.on_message_transmitted, Qt.ConnectionType.QueuedConnection)
+        self.network_manager.network_state_changed.connect(self.on_network_state_changed, Qt.ConnectionType.QueuedConnection)
         
-    @pyqtSlot(object)
-    def on_message_received(self, msg: CANMessage):
-        """Handle received CAN message"""
-        if self.passes_filters(msg):
+    @pyqtSlot(str, object)
+    def on_message_received(self, network_id: str, msg: CANMessage):
+        """Handle received CAN message from multi-network manager"""
+        if self.monitoring_active and self.passes_filters(msg):
             # Store current selection and scroll position
             current_item = self.message_table.currentItem()
             
@@ -621,10 +646,10 @@ class MonitorTab(QWidget):
                     if msg_id:
                         del self.message_table.message_stats[msg_id]
                 
-    @pyqtSlot(object)
-    def on_message_transmitted(self, msg: CANMessage):
-        """Handle transmitted CAN message"""
-        if self.passes_filters(msg):
+    @pyqtSlot(str, object)
+    def on_message_transmitted(self, network_id: str, msg: CANMessage):
+        """Handle transmitted CAN message from multi-network manager"""
+        if self.monitoring_active and self.passes_filters(msg):
             # Store current selection
             current_item = self.message_table.currentItem()
             
@@ -661,22 +686,28 @@ class MonitorTab(QWidget):
                     except:
                         pass
                 
-    @pyqtSlot(bool)
-    def on_connection_changed(self, connected: bool):
-        """Handle CAN interface connection changes"""
-        if connected:
-            self.start_btn.setEnabled(True)
-        else:
-            self.start_btn.setEnabled(True)
-            self.stop_btn.setEnabled(False)
+    @pyqtSlot(str, object)
+    def on_network_state_changed(self, network_id: str, state):
+        """Handle network state changes"""
+        # Update monitoring status based on active networks
+        active_networks = len([n for n in self.network_manager.get_all_networks().values() if n.is_connected()])
+        
+        # Enable/disable monitoring based on network availability
+        has_networks = active_networks > 0
+        self.start_btn.setEnabled(has_networks and not self.monitoring_active)
+        
+        if active_networks == 0 and self.monitoring_active:
+            self.stop_monitoring()
             
     def start_monitoring(self):
         """Start message monitoring"""
+        self.monitoring_active = True
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         
     def stop_monitoring(self):
         """Stop message monitoring"""
+        self.monitoring_active = False
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         
@@ -773,10 +804,17 @@ Signal: {signal_info}
                 
     def update_status(self):
         """Update status labels"""
-        stats = self.can_manager.get_statistics()
-        total_messages = stats.get('message_count', 0)
-        rx_count = stats.get('rx_count', 0)
-        tx_count = stats.get('tx_count', 0)
+        # Get combined stats from all networks
+        total_messages = 0
+        rx_count = 0
+        tx_count = 0
+        
+        for network in self.network_manager.get_all_networks().values():
+            stats = network.get_statistics()
+            total_messages += stats.get('message_count', 0)
+            rx_count += stats.get('rx_count', 0)
+            tx_count += stats.get('tx_count', 0)
+            
         unique_ids = len(self.message_table.message_stats)
         
         self.message_count_label.setText(f"Messages: {total_messages}")
@@ -791,7 +829,7 @@ Signal: {signal_info}
         # Update UI to reflect SYM file status
         if parser:
             self.sym_file_label.setText("SYM file loaded")
-            self.sym_file_label.setStyleSheet("color: green; font-weight: bold;")
+            self.sym_file_label.setStyleSheet("color: #666666; font-weight: bold;")
             self.load_sym_btn.setEnabled(False)
             self.unload_sym_btn.setEnabled(True)
             
@@ -801,7 +839,7 @@ Signal: {signal_info}
             self.sym_stats_label.setText(f"{msg_count} messages, {signal_count} signals")
         else:
             self.sym_file_label.setText("No SYM file loaded")
-            self.sym_file_label.setStyleSheet("color: gray; font-style: italic;")
+            self.sym_file_label.setStyleSheet("color: #666666; font-style: italic;")
             self.load_sym_btn.setEnabled(True)
             self.unload_sym_btn.setEnabled(False)
             self.sym_stats_label.setText("")

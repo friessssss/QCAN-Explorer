@@ -1,6 +1,9 @@
 """
-CAN Interface Manager
-Handles connections to various CAN interfaces and message handling
+CAN Interface Manager (DEPRECATED)
+This module is deprecated and replaced by the multi_network_manager.py system.
+Use MultiNetworkManager for new development.
+
+Legacy module kept for backward compatibility only.
 """
 
 import threading

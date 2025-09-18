@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot, pyqtSignal
 from PyQt6.QtGui import QFont, QColor
 
-from canbus.interface_manager import CANInterfaceManager
+# Network manager will be passed in constructor
 from canbus.messages import CANMessage
 from utils.sym_parser import SymParser, SymMessage, SymEnum
 
@@ -156,9 +156,9 @@ class SymbolsTab(QWidget):
     # Signal emitted when SYM parser changes
     sym_parser_changed = pyqtSignal(object)  # SymParser
     
-    def __init__(self, can_manager: CANInterfaceManager):
+    def __init__(self, network_manager):
         super().__init__()
-        self.can_manager = can_manager
+        self.network_manager = network_manager
         self.setup_ui()
         self.setup_connections()
         
@@ -300,8 +300,8 @@ class SymbolsTab(QWidget):
         
     def setup_connections(self):
         """Set up signal connections"""
-        self.can_manager.message_received.connect(self.on_message_received)
-        self.can_manager.message_transmitted.connect(self.on_message_transmitted)
+        self.network_manager.message_received.connect(self.on_message_received)
+        self.network_manager.message_transmitted.connect(self.on_message_transmitted)
         
     def load_sym_file(self):
         """Load SYM file"""
@@ -472,14 +472,14 @@ Signal Assignments ({len(message.signals)}):
         self.message_cache.clear()
         self.update_statistics()
         
-    @pyqtSlot(object)
-    def on_message_received(self, msg: CANMessage):
+    @pyqtSlot(str, object)
+    def on_message_received(self, network_id: str, msg: CANMessage):
         """Handle received CAN message"""
         if self.auto_decode_cb.isChecked():
             self.decode_message(msg)
             
-    @pyqtSlot(object)
-    def on_message_transmitted(self, msg: CANMessage):
+    @pyqtSlot(str, object)
+    def on_message_transmitted(self, network_id: str, msg: CANMessage):
         """Handle transmitted CAN message"""
         if self.auto_decode_cb.isChecked():
             self.decode_message(msg)
