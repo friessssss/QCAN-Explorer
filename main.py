@@ -6,6 +6,7 @@ Main application entry point
 
 import sys
 import os
+import platform
 from PyQt6.QtWidgets import QApplication, QStyleFactory
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QPalette, QColor
@@ -47,8 +48,36 @@ def main():
     # Create QApplication instance
     app = QApplication(sys.argv)
     app.setApplicationName("QCAN Explorer")
-    app.setApplicationVersion("1.0.0")
+    app.setApplicationDisplayName("QCAN Explorer")
+    app.setApplicationVersion("2.0.0")
     app.setOrganizationName("QCAN Tools")
+    app.setOrganizationDomain("qcan-explorer.com")
+    
+    # Set application icon
+    try:
+        app_icon = QIcon("logo.png")
+        if not app_icon.isNull():
+            app.setWindowIcon(app_icon)
+    except Exception as e:
+        print(f"Warning: Could not set application icon: {e}")
+    
+    # macOS-specific settings
+    if platform.system() == "Darwin":
+        # Set the application bundle identifier for macOS
+        app.setProperty("com.qcan.explorer.bundle", "com.qcan.explorer")
+        # Ensure the app name appears correctly in the menu bar
+        try:
+            import objc
+            from Foundation import NSBundle
+            bundle = NSBundle.mainBundle()
+            if bundle:
+                info = bundle.localizedInfoDictionary() or bundle.infoDictionary()
+                if info:
+                    info['CFBundleName'] = 'QCAN Explorer'
+                    info['CFBundleDisplayName'] = 'QCAN Explorer'
+        except ImportError:
+            # objc not available, use alternative approach
+            pass
     
     # Set up application style
     setup_application_style(app)

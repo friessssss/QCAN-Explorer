@@ -6,7 +6,7 @@ import os
 import csv
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, 
                              QTableWidgetItem, QHeaderView, QPushButton, QLabel,
@@ -16,7 +16,6 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QColor
 
-from canbus.interface_manager import CANInterfaceManager
 from canbus.messages import CANMessage
 
 
@@ -54,8 +53,8 @@ class LogTextWidget(QTextEdit):
         """Clear all messages but keep header"""
         self.messages.clear()
         # Reset to header only
-        header_text = "  #    Time (rel.)         ID        Message Name                     Dir Type DLC  Data (hex.)\n"
-        header_text += "-" * 125 + "\n"
+        header_text = "  #    Time (rel.)       Bus  ID        Message Name                     Dir Type DLC  Data (hex.)\n"
+        header_text += "-" * 135 + "\n"
         self.setPlainText(header_text)
         
     def mouseMoveEvent(self, event):
@@ -158,11 +157,12 @@ class LogWriter(QThread):
     finished = pyqtSignal(str)
     error_occurred = pyqtSignal(str)
     
-    def __init__(self, messages: List[CANMessage], filename: str, format_type: str):
+    def __init__(self, messages: List[CANMessage], filename: str, format_type: str, log_start_time: float = None):
         super().__init__()
         self.messages = messages
         self.filename = filename
         self.format_type = format_type
+        self.log_start_time = log_start_time
         
     def run(self):
         """Write messages to file"""
@@ -182,6 +182,31 @@ class LogWriter(QThread):
             
         except Exception as e:
             self.error_occurred.emit(str(e))
+    
+    def get_relative_timestamp(self, msg: CANMessage) -> float:
+        """Get relative timestamp from log start, or absolute if no start time"""
+        if self.log_start_time is not None:
+            return msg.timestamp - self.log_start_time
+        return msg.timestamp
+    
+    def unix_to_ole_date(self, unix_timestamp: float) -> float:
+        """Convert Unix timestamp to OLE Automation Date format
+        
+        OLE Date: Days since December 30, 1899 (day 0) + fractional day
+        Unix timestamp: Seconds since January 1, 1970
+        """
+        # OLE Date epoch: December 30, 1899 00:00:00 UTC
+        # Unix epoch: January 1, 1970 00:00:00 UTC
+        # Difference: 25567 days (70 years + 17 leap days + 1 day)
+        ole_epoch_offset = 25567.0
+        
+        # Convert Unix timestamp to days
+        days_since_unix_epoch = unix_timestamp / (24 * 60 * 60)
+        
+        # Add offset to get days since OLE epoch
+        ole_date = ole_epoch_offset + days_since_unix_epoch
+        
+        return ole_date
             
     def write_csv(self):
         """Write messages in CSV format"""
@@ -195,7 +220,7 @@ class LogWriter(QThread):
             for i, msg in enumerate(self.messages):
                 data_hex = ' '.join(f'{b:02X}' for b in msg.data)
                 writer.writerow([
-                    msg.timestamp,
+                    self.get_relative_timestamp(msg),
                     f'0x{msg.arbitration_id:X}',
                     len(msg.data),
                     data_hex,
@@ -221,7 +246,7 @@ class LogWriter(QThread):
         
         for i, msg in enumerate(self.messages):
             msg_data = {
-                'timestamp': msg.timestamp,
+                'timestamp': self.get_relative_timestamp(msg),
                 'id': msg.arbitration_id,
                 'data': list(msg.data),
                 'dlc': len(msg.data),
@@ -252,7 +277,7 @@ class LogWriter(QThread):
             
             # Write messages
             for i, msg in enumerate(self.messages):
-                timestamp_ms = msg.timestamp * 1000
+                timestamp_ms = self.get_relative_timestamp(msg) * 1000
                 data_hex = ''.join(f'{b:02X}' for b in msg.data)
                 
                 direction = 'Rx' if msg.direction == 'rx' else 'Tx'
@@ -269,14 +294,22 @@ class LogWriter(QThread):
             f.write("End TriggerBlock\n")
             
     def write_trc(self):
-        """Write messages in TRC format (Vector CANoe/CANalyzer format)"""
+        """Write messages in TRC format (PCAN Explorer compatible format)"""
         with open(self.filename, 'w') as f:
-            # Write header
+            # Write PCAN Explorer compatible header
             f.write(";$FILEVERSION=2.1\n")
-            f.write(f";$STARTTIME={time.time()}\n")
+            
+            # Calculate OLE Automation Date for start time
+            start_time = self.log_start_time if self.log_start_time else time.time()
+            ole_start_time = self.unix_to_ole_date(start_time)
+            f.write(f";$STARTTIME={ole_start_time:.10f}\n")
+            
             f.write(";$COLUMNS=N,O,T,B,I,d,R,L,D\n")
             f.write(";\n")
-            f.write(f";   Start time: {datetime.now().strftime('%m/%d/%Y %H:%M:%S.%f')[:-3]}\n")
+            
+            # Add human-readable start time
+            start_datetime = datetime.fromtimestamp(start_time)
+            f.write(f";   Start time: {start_datetime.strftime('%m/%d/%Y %H:%M:%S.%f')[:-3]}\n")
             f.write(";   Generated by QCAN Explorer\n")
             f.write(";-------------------------------------------------------------------------------\n")
             f.write(";   Bus  Connection        Protocol  Bit rate\n")
@@ -289,10 +322,9 @@ class LogWriter(QThread):
             f.write(";   |          |       |  |    |      |  |  |    |\n")
             f.write(";---+--- ------+------ +- +- --+----- +- +- +--- +- -- -- -- -- -- -- --\n")
             
-            # Write messages
-            start_time = self.messages[0].timestamp if self.messages else time.time()
+            # Write messages - TRC format uses relative timestamps by design
             for i, msg in enumerate(self.messages):
-                timestamp_ms = (msg.timestamp - start_time) * 1000
+                timestamp_ms = self.get_relative_timestamp(msg) * 1000
                 data_hex = ' '.join(f'{b:02X}' for b in msg.data)
                 
                 direction = 'Rx' if msg.direction == 'rx' else 'Tx'
@@ -484,19 +516,21 @@ class LogReader(QThread):
 class LoggingTab(QWidget):
     """Data logging and playback tab"""
     
-    def __init__(self, can_manager: CANInterfaceManager):
+    def __init__(self, network_manager):
         super().__init__()
-        self.can_manager = can_manager
+        self.network_manager = network_manager
         self.setup_ui()
         self.setup_connections()
         
         # Logging state
         self.is_logging = False
         self.logged_messages = []
+        self.log_start_time = None  # Track start time for relative timestamps
         
         # Playback state
         self.playback_messages = []
         self.playback_index = 0
+        self.playback_start_time = None  # Track start time for relative timing in playback
         self.playback_timer = QTimer()
         self.playback_timer.timeout.connect(self.playback_next_message)
         
@@ -565,14 +599,14 @@ class LoggingTab(QWidget):
                 background-color: white;
                 color: black;
                 border: 1px solid gray;
-                selection-background-color: #3399ff;
+                selection-background-color: #888888;
                 line-height: 1.2;
             }
         """)
         
-        # Add column header with significantly wider message name column
-        header_text = "  #    Time (rel.)         ID        Message Name                     Dir Type DLC  Data (hex.)\n"
-        header_text += "-" * 125 + "\n"
+        # Add column header with bus number and wider message name column
+        header_text = "  #    Time (rel.)       Bus  ID        Message Name                     Dir Type DLC  Data (hex.)\n"
+        header_text += "-" * 135 + "\n"
         self.playback_text.setPlainText(header_text)
         playback_layout.addWidget(self.playback_text)
         
@@ -609,18 +643,19 @@ class LoggingTab(QWidget):
         
     def setup_connections(self):
         """Set up signal connections"""
-        self.can_manager.message_received.connect(self.on_message_received)
-        self.can_manager.message_transmitted.connect(self.on_message_transmitted)
-        self.can_manager.connection_changed.connect(self.on_connection_changed)
+        # These connections are handled by the other setup_connections method
         
     def start_logging(self):
         """Start logging CAN messages"""
-        if not self.can_manager.is_connected():
-            QMessageBox.warning(self, "Warning", "Not connected to CAN interface")
+        # Check if any networks are connected
+        connected_networks = [n for n in self.network_manager.get_all_networks().values() if n.is_connected()]
+        if not connected_networks:
+            QMessageBox.warning(self, "Warning", "No networks connected")
             return
             
         self.is_logging = True
         self.logged_messages.clear()
+        self.log_start_time = time.time()  # Record start time for relative timestamps
         
         # Update UI
         self.start_log_btn.setEnabled(False)
@@ -667,13 +702,21 @@ class LoggingTab(QWidget):
             filter_str = "TRC Files (*.trc);;All Files (*)"
             default_ext = ".trc"
             
+        # Generate filename with start time
+        if self.log_start_time:
+            start_datetime = datetime.fromtimestamp(self.log_start_time)
+            datetime_str = start_datetime.strftime("%Y-%m-%d_%H-%M-%S")
+            default_filename = f"can_log_{datetime_str}{default_ext}"
+        else:
+            default_filename = f"can_log_{int(time.time())}{default_ext}"
+            
         filename, _ = QFileDialog.getSaveFileName(
-            self, "Save Log File", f"can_log_{int(time.time())}{default_ext}", filter_str
+            self, "Save Log File", default_filename, filter_str
         )
         
         if filename:
             # Start background save
-            self.log_writer = LogWriter(self.logged_messages.copy(), filename, format_type)
+            self.log_writer = LogWriter(self.logged_messages.copy(), filename, format_type, self.log_start_time)
             self.log_writer.progress_updated.connect(self.progress_bar.setValue)
             self.log_writer.finished.connect(self.on_save_finished)
             self.log_writer.error_occurred.connect(self.on_save_error)
@@ -699,6 +742,7 @@ class LoggingTab(QWidget):
             
             self.playback_messages.clear()
             self.playback_index = 0
+            self.playback_start_time = None  # Reset playback start time
             
             self.progress_bar.setVisible(True)
             self.progress_bar.setValue(0)
@@ -711,8 +755,10 @@ class LoggingTab(QWidget):
             QMessageBox.information(self, "Info", "No playback file loaded")
             return
             
-        if not self.can_manager.is_connected():
-            QMessageBox.warning(self, "Warning", "Not connected to CAN interface")
+        # Check if any networks are connected for playback
+        connected_networks = [n for n in self.network_manager.get_all_networks().values() if n.is_connected()]
+        if not connected_networks:
+            QMessageBox.warning(self, "Warning", "No networks connected for playback")
             return
             
         # Calculate playback interval based on speed
@@ -756,7 +802,10 @@ class LoggingTab(QWidget):
         
         # Send message if it's a TX message or if we're replaying all
         if msg.direction == 'tx':
-            self.can_manager.send_message(msg.arbitration_id, msg.data, msg.is_extended_id)
+            # Send on first available network (could be enhanced to use original bus)
+            connected_networks = [n for n in self.network_manager.get_all_networks().values() if n.is_connected()]
+            if connected_networks:
+                connected_networks[0].send_message(msg.arbitration_id, msg.data, msg.is_extended_id)
             
         self.playback_index += 1
         
@@ -856,6 +905,7 @@ class LoggingTab(QWidget):
                 # Clear current playback data
                 self.playback_text.clear_messages()
                 self.playback_messages = []
+                self.playback_start_time = None  # Reset playback start time
                 
                 # Determine file type and load
                 file_ext = filename.lower().split('.')[-1]
@@ -880,7 +930,17 @@ class LoggingTab(QWidget):
         
         # Format message for text display with distinct columns and message name
         msg_num = len(self.playback_messages)
-        time_str = f"{msg.timestamp:.4f}"
+        
+        # For loaded files, timestamps are already relative or need to be made relative
+        if len(self.playback_messages) == 1:
+            # First message sets the baseline for relative timing
+            self.playback_start_time = msg.timestamp
+            time_str = "0.0000"
+        else:
+            # Calculate relative time from first message
+            relative_time = msg.timestamp - self.playback_start_time
+            time_str = f"{relative_time:.4f}"
+            
         id_str = f"0x{msg.arbitration_id:06X}"
         data_str = " ".join(f"{b:02X}" for b in msg.data)
         direction_str = msg.direction.upper()
@@ -890,7 +950,7 @@ class LoggingTab(QWidget):
         name_str = message_name[:30] if message_name else ""  # Much wider - 30 chars for full names
         
         # Create line with proper column alignment including message name
-        line_text = f"{msg_num:4d} {time_str:18s} {id_str:9s} {name_str:30s} {direction_str:3s} Data {len(msg.data):2d}  {data_str}"
+        line_text = f"{msg_num:4d} {time_str:16s} {msg.bus_number:3d}  {id_str:9s} {name_str:30s} {direction_str:3s} Data {len(msg.data):2d}  {data_str}"
         
         # Add to text widget
         self.playback_text.add_message_line(msg, line_text)
@@ -915,12 +975,12 @@ class LoggingTab(QWidget):
         
     def setup_connections(self):
         """Set up signal connections"""
-        # Connect to CAN manager signals for logging
-        self.can_manager.message_received.connect(self.on_message_received)
-        self.can_manager.message_transmitted.connect(self.on_message_transmitted)
+        # Connect to multi-network manager signals for logging
+        self.network_manager.message_received.connect(self.on_message_received)
+        self.network_manager.message_transmitted.connect(self.on_message_transmitted)
         
-    @pyqtSlot(object)
-    def on_message_received(self, msg):
+    @pyqtSlot(str, object)
+    def on_message_received(self, network_id: str, msg):
         """Handle received CAN message for logging"""
         if self.is_logging:
             self.logged_messages.append(msg)
@@ -929,8 +989,8 @@ class LoggingTab(QWidget):
             # Also display in playback area for real-time view
             self.add_message_to_display(msg)
             
-    @pyqtSlot(object)
-    def on_message_transmitted(self, msg):
+    @pyqtSlot(str, object)
+    def on_message_transmitted(self, network_id: str, msg):
         """Handle transmitted CAN message for logging"""
         if self.is_logging:
             self.logged_messages.append(msg)
@@ -943,7 +1003,14 @@ class LoggingTab(QWidget):
         """Add message to the playback text display"""
         # Format message for text display with distinct columns and message name
         msg_num = len(self.logged_messages)
-        time_str = f"{msg.timestamp:.4f}"
+        
+        # Calculate relative time from log start
+        if self.log_start_time is not None:
+            relative_time = msg.timestamp - self.log_start_time
+            time_str = f"{relative_time:.4f}"
+        else:
+            time_str = f"{msg.timestamp:.4f}"
+            
         id_str = f"0x{msg.arbitration_id:06X}"
         data_str = " ".join(f"{b:02X}" for b in msg.data)
         direction_str = msg.direction.upper()
@@ -952,9 +1019,9 @@ class LoggingTab(QWidget):
         message_name = self.playback_text.get_message_name(msg.arbitration_id)
         name_str = message_name[:30] if message_name else ""  # Much wider - 30 chars for full names
         
-        # Create line with proper column alignment including message name
-        # Format: Number  Time            ID        MessageName      Dir Type DLC  Data
-        line_text = f"{msg_num:4d} {time_str:18s} {id_str:9s} {name_str:30s} {direction_str:3s} Data {len(msg.data):2d}  {data_str}"
+        # Create line with proper column alignment including bus number and message name
+        # Format: Number  Time            Bus  ID        MessageName      Dir Type DLC  Data
+        line_text = f"{msg_num:4d} {time_str:16s} {msg.bus_number:3d}  {id_str:9s} {name_str:30s} {direction_str:3s} Data {len(msg.data):2d}  {data_str}"
         
         # Add to text widget
         self.playback_text.add_message_line(msg, line_text)
@@ -966,8 +1033,9 @@ class LoggingTab(QWidget):
         self.stop_log_btn.setEnabled(True)
         self.log_status_label.setText("Status: Logging...")
         
-        # Clear previous log
+        # Clear previous log and set start time
         self.logged_messages.clear()
+        self.log_start_time = time.time()  # Record start time for relative timestamps
         self.playback_text.clear_messages()
         
     def stop_logging(self):
@@ -980,6 +1048,7 @@ class LoggingTab(QWidget):
     def clear_log(self):
         """Clear logged messages"""
         self.logged_messages.clear()
+        self.log_start_time = None  # Reset start time
         self.playback_text.clear_messages()
         self.log_status_label.setText("Status: Cleared")
         self.update_statistics()
@@ -992,22 +1061,34 @@ class LoggingTab(QWidget):
             
         format_type = self.save_format_combo.currentText()
         
+        # Generate filename with start time
+        if self.log_start_time:
+            start_datetime = datetime.fromtimestamp(self.log_start_time)
+            datetime_str = start_datetime.strftime("%Y-%m-%d_%H-%M-%S")
+        else:
+            datetime_str = str(int(time.time()))
+            
         # Get filename
         if format_type == "CSV":
-            filename, _ = QFileDialog.getSaveFileName(self, "Save Log File", "", "CSV Files (*.csv)")
+            default_name = f"can_log_{datetime_str}.csv"
+            filename, _ = QFileDialog.getSaveFileName(self, "Save Log File", default_name, "CSV Files (*.csv)")
         elif format_type == "JSON":
-            filename, _ = QFileDialog.getSaveFileName(self, "Save Log File", "", "JSON Files (*.json)")
+            default_name = f"can_log_{datetime_str}.json"
+            filename, _ = QFileDialog.getSaveFileName(self, "Save Log File", default_name, "JSON Files (*.json)")
         elif format_type == "ASC":
-            filename, _ = QFileDialog.getSaveFileName(self, "Save Log File", "", "ASC Files (*.asc)")
+            default_name = f"can_log_{datetime_str}.asc"
+            filename, _ = QFileDialog.getSaveFileName(self, "Save Log File", default_name, "ASC Files (*.asc)")
         elif format_type == "TRC":
-            filename, _ = QFileDialog.getSaveFileName(self, "Save Log File", "", "TRC Files (*.trc)")
+            default_name = f"can_log_{datetime_str}.trc"
+            filename, _ = QFileDialog.getSaveFileName(self, "Save Log File", default_name, "TRC Files (*.trc)")
         else:
-            filename, _ = QFileDialog.getSaveFileName(self, "Save Log File", "", "All Files (*)")
+            default_name = f"can_log_{datetime_str}"
+            filename, _ = QFileDialog.getSaveFileName(self, "Save Log File", default_name, "All Files (*)")
             
         if filename:
             try:
                 # Create log writer
-                self.log_writer = LogWriter(filename, format_type, self.logged_messages)
+                self.log_writer = LogWriter(self.logged_messages.copy(), filename, format_type, self.log_start_time)
                 self.log_writer.progress_updated.connect(self.on_save_progress)
                 self.log_writer.finished.connect(self.on_save_finished)
                 self.log_writer.error_occurred.connect(self.on_save_error)

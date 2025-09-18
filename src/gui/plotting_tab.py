@@ -13,9 +13,9 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLa
                              QFileDialog, QMessageBox, QTableWidget, QTableWidgetItem,
                              QHeaderView, QSlider, QDialog)
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot, pyqtSignal
-from PyQt6.QtGui import QFont, QColor
+from PyQt6.QtGui import QFont, QColor, QPixmap
 
-from canbus.interface_manager import CANInterfaceManager
+# Network manager will be passed in constructor
 from canbus.messages import CANMessage
 from utils.sym_parser import SymParser
 
@@ -56,7 +56,7 @@ class SignalSelectionDialog(QDialog):
         
         # Selection info
         self.selection_label = QLabel("0 signals selected")
-        self.selection_label.setStyleSheet("font-weight: bold; color: #2980b9;")
+        self.selection_label.setStyleSheet("font-weight: bold; color: #666666;")
         layout.addWidget(self.selection_label)
         
         # Buttons
@@ -123,6 +123,32 @@ class SignalSelectionDialog(QDialog):
                         
                         # Store full info for retrieval
                         item.setData(0, Qt.ItemDataRole.UserRole, (msg_name, signal_def.name))
+
+    def load_signals_from_networks(self, network_parsers: List[tuple]):
+        """Load signals from multiple network parsers"""
+        self.signal_tree.clear()
+        
+        if not network_parsers:
+            return
+            
+        # Add signals from each network's parser
+        for bus_number, sym_parser in network_parsers:
+            if not sym_parser or not sym_parser.messages:
+                continue
+                
+            # Add signals from each message
+            for msg_name, message in sym_parser.messages.items():
+                for variable in message.variables:
+                    item = QTreeWidgetItem(self.signal_tree)
+                    # Show full signal name with bus information
+                    signal_display_name = f"Bus{bus_number}.{msg_name}.{variable.name}"
+                    item.setText(0, signal_display_name)
+                    item.setText(1, msg_name)  # Message name
+                    item.setText(2, variable.unit or "")  # Unit
+                    item.setText(3, getattr(variable, 'comment', '') or "")  # Description
+                    
+                    # Store message name, signal name, bus number, and CAN ID for internal use
+                    item.setData(0, Qt.ItemDataRole.UserRole, (msg_name, variable.name, bus_number, message.can_id))
                 
     def update_selection_count(self):
         """Update selection count label"""
@@ -138,23 +164,29 @@ class SignalSelectionDialog(QDialog):
         self.signal_tree.clearSelection()
         
     def get_selected_signals(self):
-        """Get list of selected signals"""
+        """Get list of selected signals with bus information"""
         selected = []
         for item in self.signal_tree.selectedItems():
             data = item.data(0, Qt.ItemDataRole.UserRole)
             if data:
-                msg_name, signal_name = data
-                selected.append((msg_name, signal_name))
+                if len(data) >= 4:
+                    msg_name, signal_name, bus_number, can_id = data
+                    selected.append((msg_name, signal_name, bus_number, can_id))
+                else:
+                    # Fallback for old format
+                    msg_name, signal_name = data[:2]
+                    selected.append((msg_name, signal_name, 0, 0))
         return selected
 
 
 class SignalData:
     """Container for signal plotting data"""
     
-    def __init__(self, message_name: str, signal_name: str, can_id: int, color: str):
+    def __init__(self, message_name: str, signal_name: str, can_id: int, color: str, bus_number: int = 0):
         self.message_name = message_name
         self.signal_name = signal_name
         self.can_id = can_id
+        self.bus_number = bus_number
         self.color = color
         self.times = deque(maxlen=10000)  # Store last 10k points
         self.values = deque(maxlen=10000)
@@ -198,40 +230,14 @@ class SignalSelectionWidget(QTreeWidget):
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         self.setColumnWidth(2, 50)
         
-    def load_signals(self, sym_parser: SymParser):
-        """Load signals from SYM parser"""
-        self.clear()
-        
-        if not sym_parser or not sym_parser.messages:
-            return
-            
-        # Add signals from each message
-        for msg_name, message in sym_parser.messages.items():
-            for variable in message.variables:
-                item = QTreeWidgetItem(self)
-                # Show full signal name (no truncation)
-                signal_display_name = f"{msg_name}.{variable.name}"
-                item.setText(0, signal_display_name)
-                item.setText(1, variable.unit or "")
-                
-                # Store message name and signal name for internal use
-                item.setData(0, Qt.ItemDataRole.UserRole, (msg_name, variable.name))
-                
-                # Add checkbox for plotting
-                checkbox = QCheckBox()
-                checkbox.stateChanged.connect(
-                    lambda state, mn=msg_name, sn=variable.name: 
-                    self.signal_toggled.emit(mn, sn, state == Qt.CheckState.Checked.value)
-                )
-                self.setItemWidget(item, 2, checkbox)
 
 
 class PlottingTab(QWidget):
     """Real-time signal plotting and analysis tab"""
     
-    def __init__(self, can_manager: CANInterfaceManager):
+    def __init__(self, network_manager):
         super().__init__()
-        self.can_manager = can_manager
+        self.network_manager = network_manager
         self.sym_parser = None
         self.setup_ui()
         self.setup_connections()
@@ -278,16 +284,12 @@ class PlottingTab(QWidget):
         control_layout.addWidget(QLabel("|"))  # Separator
         
         # File controls
-        self.load_sym_btn = QPushButton("Load SYM File")
-        self.load_sym_btn.clicked.connect(self.load_sym_file)
-        control_layout.addWidget(self.load_sym_btn)
-        
         self.load_trace_btn = QPushButton("Load Trace File")
         self.load_trace_btn.clicked.connect(self.load_trace_file)
         control_layout.addWidget(self.load_trace_btn)
         
-        self.sym_status_label = QLabel("No SYM file loaded")
-        self.sym_status_label.setStyleSheet("color: gray; font-style: italic;")
+        self.sym_status_label = QLabel("Using network-assigned symbol files")
+        self.sym_status_label.setStyleSheet("color: #666666; font-style: italic;")
         control_layout.addWidget(self.sym_status_label)
         
         control_layout.addStretch()
@@ -306,7 +308,7 @@ class PlottingTab(QWidget):
         
         self.select_signals_btn = QPushButton("Select Signals to Plot")
         self.select_signals_btn.clicked.connect(self.open_signal_selection)
-        self.select_signals_btn.setStyleSheet("background-color: #3498db; color: white; font-weight: bold; padding: 8px;")
+        self.select_signals_btn.setStyleSheet("background-color: #777777; color: white; font-weight: bold; padding: 8px;")
         signal_controls.addWidget(self.select_signals_btn)
         
         self.selected_signals_label = QLabel("No signals selected")
@@ -371,55 +373,51 @@ class PlottingTab(QWidget):
     def setup_connections(self):
         """Set up signal connections"""
         # Connect to CAN manager for real-time data
-        self.can_manager.message_received.connect(self.on_message_received, Qt.ConnectionType.QueuedConnection)
+        self.network_manager.message_received.connect(self.on_message_received, Qt.ConnectionType.QueuedConnection)
         
-    def set_sym_parser(self, parser: SymParser):
-        """Set SYM parser for signal definitions"""
-        self.sym_parser = parser
+        # Update symbol status when networks change
+        self.network_manager.network_state_changed.connect(self.update_symbol_status, Qt.ConnectionType.QueuedConnection)
         
-        if parser:
-            self.sym_status_label.setText(f"Loaded: {len(parser.messages)} messages")
-            self.sym_status_label.setStyleSheet("color: green; font-weight: bold;")
+        # Initial symbol status update
+        self.update_symbol_status()
+        
+    def update_symbol_status(self):
+        """Update symbol file status based on network assignments"""
+        networks = self.network_manager.get_all_networks()
+        sym_files = []
+        
+        for network in networks.values():
+            if network.config.symbol_file_path:
+                import os
+                filename = os.path.basename(network.config.symbol_file_path)
+                sym_files.append(f"Bus {network.config.bus_number}: {filename}")
+        
+        if sym_files:
+            status_text = "Symbol files: " + ", ".join(sym_files)
+            self.sym_status_label.setText(status_text)
+            self.sym_status_label.setStyleSheet("color: #666666; font-weight: bold;")
         else:
-            self.sym_status_label.setText("No SYM file loaded")
-            self.sym_status_label.setStyleSheet("color: gray; font-style: italic;")
-            
-    def load_sym_file(self):
-        """Load SYM file for plotting"""
-        filename, _ = QFileDialog.getOpenFileName(
-            self, "Load SYM File", "", "SYM Files (*.sym);;All Files (*)"
-        )
-        
-        if filename:
-            try:
-                parser = SymParser()
-                success = parser.parse_file(filename)
-                
-                if success:
-                    self.set_sym_parser(parser)
-                    
-                    # Notify main window
-                    main_window = self.window()
-                    if hasattr(main_window, 'symbols_tab'):
-                        main_window.symbols_tab.sym_parser = parser
-                        main_window.symbols_tab.sym_parser_changed.emit(parser)
-                    
-                    QMessageBox.information(self, "Success", 
-                                          f"Loaded SYM file with {len(parser.messages)} messages")
-                else:
-                    QMessageBox.critical(self, "Error", "Failed to parse SYM file")
-                    
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to load SYM file: {str(e)}")
+            self.sym_status_label.setText("Using network-assigned symbol files")
+            self.sym_status_label.setStyleSheet("color: #666666; font-style: italic;")
                 
     def open_signal_selection(self):
         """Open signal selection dialog"""
-        if not self.sym_parser:
-            QMessageBox.warning(self, "Warning", "Please load a SYM file first")
+        # Get all available symbol parsers from networks
+        networks = self.network_manager.get_all_networks()
+        available_parsers = []
+        
+        for network in networks.values():
+            parser = network.get_symbol_parser()
+            if parser and parser.messages:
+                available_parsers.append((network.config.bus_number, parser))
+        
+        if not available_parsers:
+            QMessageBox.warning(self, "Warning", "No symbol files assigned to any network")
             return
             
         dialog = SignalSelectionDialog(self)
-        dialog.load_signals(self.sym_parser)
+        # Load signals from all available parsers
+        dialog.load_signals_from_networks(available_parsers)
         
         if dialog.exec() == QDialog.DialogCode.Accepted:
             selected_signals = dialog.get_selected_signals()
@@ -427,26 +425,73 @@ class PlottingTab(QWidget):
             # Clear current signals
             self.clear_plots()
             
-            # Add selected signals
-            for message_name, signal_name in selected_signals:
-                self.on_signal_toggled(message_name, signal_name, True)
+            # Add selected signals with bus information
+            for signal_info in selected_signals:
+                if len(signal_info) >= 4:
+                    message_name, signal_name, bus_number, can_id = signal_info
+                    self.on_signal_toggled_with_bus(message_name, signal_name, bus_number, can_id, True)
+                else:
+                    # Fallback for old format
+                    message_name, signal_name = signal_info[:2]
+                    self.on_signal_toggled(message_name, signal_name, True)
                 
             # Update label
             if selected_signals:
-                signal_names = [f"{msg}.{sig}" for msg, sig in selected_signals]
+                signal_names = []
+                for signal_info in selected_signals:
+                    if len(signal_info) >= 4:
+                        msg, sig, bus, _ = signal_info
+                        signal_names.append(f"Bus{bus}.{msg}.{sig}")
+                    else:
+                        msg, sig = signal_info[:2]
+                        signal_names.append(f"{msg}.{sig}")
+                
                 if len(signal_names) <= 3:
                     label_text = ", ".join(signal_names)
                 else:
                     label_text = f"{', '.join(signal_names[:3])} and {len(signal_names)-3} more"
                 self.selected_signals_label.setText(label_text)
-                self.selected_signals_label.setStyleSheet("color: green; font-weight: bold;")
+                self.selected_signals_label.setStyleSheet("color: #666666; font-weight: bold;")
             else:
                 self.selected_signals_label.setText("No signals selected")
                 self.selected_signals_label.setStyleSheet("color: gray; font-style: italic;")
                 
+    def on_signal_toggled_with_bus(self, message_name: str, signal_name: str, bus_number: int, can_id: int, enabled: bool):
+        """Handle signal selection toggle with bus information"""
+        signal_key = f"Bus{bus_number}.{message_name}.{signal_name}"
+        
+        print(f"🔄 Signal toggle: {signal_key}, enabled: {enabled}, trace_mode: {self.is_trace_mode}")
+        
+        if enabled and signal_key not in self.signals:
+            # Create new signal
+            colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F']
+            color = colors[len(self.signals) % len(colors)]
+            
+            signal_data = SignalData(message_name, signal_name, can_id, color, bus_number)
+            self.signals[signal_key] = signal_data
+            
+            print(f"📊 Created signal data: {signal_key} with CAN ID 0x{can_id:X}")
+            
+            # Add to plot if in real-time mode
+            if not self.is_trace_mode:
+                self.add_signal_to_plot(signal_data)
+            else:
+                # If in trace mode, plot the signal from loaded data
+                self.plot_signal_from_trace(signal_data)
+                
+        elif not enabled and signal_key in self.signals:
+            # Remove signal
+            signal_data = self.signals[signal_key]
+            if signal_data.plot_item:
+                self.plot_widget.removeItem(signal_data.plot_item)
+            del self.signals[signal_key]
+            print(f"🗑️ Removed signal: {signal_key}")
+            
+        self.update_stats()
+
     @pyqtSlot(str, str, bool)
     def on_signal_toggled(self, message_name: str, signal_name: str, enabled: bool):
-        """Handle signal selection toggle"""
+        """Handle signal selection toggle (legacy method)"""
         signal_key = f"{message_name}.{signal_name}"
         
         if enabled:
@@ -485,15 +530,15 @@ class PlottingTab(QWidget):
                 
         self.update_stats()
         
-    @pyqtSlot(object)
-    def on_message_received(self, msg: CANMessage):
+    @pyqtSlot(str, object)
+    def on_message_received(self, network_id: str, msg: CANMessage):
         """Handle received CAN message for plotting"""
-        if not self.is_recording or not self.sym_parser:
+        if not self.is_recording:
             return
             
-        # Find signals to update for this message
+        # Find signals to update for this message (match both CAN ID and bus number)
         for signal_key, signal_data in self.signals.items():
-            if signal_data.can_id == msg.arbitration_id:
+            if signal_data.can_id == msg.arbitration_id and signal_data.bus_number == msg.bus_number:
                 # Decode the signal value
                 value = self.decode_signal_value(msg, signal_data.message_name, signal_data.signal_name)
                 if value is not None:
@@ -505,11 +550,17 @@ class PlottingTab(QWidget):
                     signal_data.add_point(relative_time, value)
                     
     def decode_signal_value(self, msg: CANMessage, message_name: str, signal_name: str) -> Optional[float]:
-        """Decode a specific signal value from a CAN message"""
-        if not self.sym_parser or message_name not in self.sym_parser.messages:
+        """Decode a specific signal value from a CAN message using network-assigned symbol parser"""
+        # Get symbol parser for this message's bus
+        network = self.network_manager.get_network_by_bus_number(msg.bus_number)
+        if not network:
             return None
             
-        message_def = self.sym_parser.messages[message_name]
+        sym_parser = network.get_symbol_parser()
+        if not sym_parser or not sym_parser.messages or message_name not in sym_parser.messages:
+            return None
+            
+        message_def = sym_parser.messages[message_name]
         
         # Find the signal variable
         for variable in message_def.variables:
@@ -554,6 +605,21 @@ class PlottingTab(QWidget):
         status = "Recording" if self.is_recording else "Stopped"
         
         self.plot_stats_label.setText(f"Signals: {signal_count} | Points: {total_points} | Recording: {status}")
+        
+    def add_signal_to_plot(self, signal_data: SignalData):
+        """Add a signal to the plot widget"""
+        try:
+            # Create plot curve
+            pen = pg.mkPen(color=signal_data.color, width=2)
+            plot_item = self.plot_widget.plot([], [], pen=pen, name=f"Bus{signal_data.bus_number}.{signal_data.message_name}.{signal_data.signal_name}")
+            signal_data.plot_item = plot_item
+            
+            print(f"✅ Added signal Bus{signal_data.bus_number}.{signal_data.message_name}.{signal_data.signal_name} to plot with color {signal_data.color}")
+            
+        except Exception as e:
+            print(f"❌ Error adding signal to plot: {e}")
+            import traceback
+            traceback.print_exc()
         
     def start_recording(self):
         """Start recording and plotting signals"""
@@ -664,9 +730,27 @@ class PlottingTab(QWidget):
         
         if filename:
             try:
-                # Export plot as image
-                exporter = pg.exporters.ImageExporter(self.plot_widget.plotItem)
-                exporter.export(filename)
+                # Try different pyqtgraph export methods
+                try:
+                    # Method 1: Try direct import of exporters
+                    from pyqtgraph.exporters import ImageExporter
+                    exporter = ImageExporter(self.plot_widget.plotItem)
+                    exporter.export(filename)
+                except (ImportError, AttributeError):
+                    try:
+                        # Method 2: Try using pg.exporters if available
+                        exporter = pg.exporters.ImageExporter(self.plot_widget.plotItem)
+                        exporter.export(filename)
+                    except (ImportError, AttributeError):
+                        # Method 3: Fallback to Qt's built-in screenshot functionality
+                        print("Using Qt widget screenshot fallback for image export")
+                        
+                        # Get the plot widget's pixmap
+                        pixmap = self.plot_widget.grab()
+                        
+                        # Save the pixmap
+                        if not pixmap.save(filename):
+                            raise Exception("Failed to save image file")
                 
                 QMessageBox.information(self, "Success", f"Exported plot image to {filename}")
                 
@@ -721,7 +805,7 @@ class PlottingTab(QWidget):
         
         # Update status
         self.sym_status_label.setText(f"Trace loaded: {message_count} messages")
-        self.sym_status_label.setStyleSheet("color: blue; font-weight: bold;")
+        self.sym_status_label.setStyleSheet("color: #666666; font-weight: bold;")
         
         # Process all messages to populate selected signals
         if self.signals and self.trace_messages:
@@ -743,9 +827,9 @@ class PlottingTab(QWidget):
         
         # Process each message in the trace
         for msg in self.trace_messages:
-            # Find signals to update for this message
+            # Find signals to update for this message (match both CAN ID and bus number)
             for signal_key, signal_data in self.signals.items():
-                if signal_data.can_id == msg.arbitration_id:
+                if signal_data.can_id == msg.arbitration_id and signal_data.bus_number == msg.bus_number:
                     # Decode the signal value
                     value = self.decode_signal_value(msg, signal_data.message_name, signal_data.signal_name)
                     if value is not None:
@@ -774,9 +858,9 @@ class PlottingTab(QWidget):
         if self.start_time is None and self.trace_messages:
             self.start_time = min(msg.timestamp for msg in self.trace_messages)
         
-        # Process trace messages for this specific signal
+        # Process trace messages for this specific signal (match both CAN ID and bus number)
         for msg in self.trace_messages:
-            if signal_data.can_id == msg.arbitration_id:
+            if signal_data.can_id == msg.arbitration_id and signal_data.bus_number == msg.bus_number:
                 # Decode the signal value
                 value = self.decode_signal_value(msg, signal_data.message_name, signal_data.signal_name)
                 if value is not None:

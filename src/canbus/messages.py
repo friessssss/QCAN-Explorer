@@ -16,3 +16,4 @@ class CANMessage:
     is_error_frame: bool
     channel: str
     direction: str  # 'rx' or 'tx'
+    bus_number: int = 0  # Bus number for multi-network identification

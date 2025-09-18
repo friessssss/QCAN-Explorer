@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot
 from PyQt6.QtGui import QFont, QColor
 
-from canbus.interface_manager import CANInterfaceManager
+# Network manager will be passed in constructor
 
 
 class VirtualMessageTable(QTableWidget):
@@ -81,9 +81,9 @@ class VirtualMessageTable(QTableWidget):
 class VirtualCANTab(QWidget):
     """Virtual CAN network control tab"""
     
-    def __init__(self, can_manager: CANInterfaceManager):
+    def __init__(self, network_manager):
         super().__init__()
-        self.can_manager = can_manager
+        self.network_manager = network_manager
         self.setup_ui()
         self.setup_connections()
         
@@ -192,12 +192,15 @@ class VirtualCANTab(QWidget):
         
     def setup_connections(self):
         """Set up signal connections"""
-        self.can_manager.connection_changed.connect(self.on_connection_changed)
+        self.network_manager.network_state_changed.connect(self.on_network_state_changed)
         
-    @pyqtSlot(bool)
-    def on_connection_changed(self, connected):
-        """Handle CAN interface connection changes"""
-        if connected and self.can_manager.is_virtual:
+    @pyqtSlot(str, object)
+    def on_network_state_changed(self, network_id: str, state):
+        """Handle network state changes"""
+        # Check if any virtual networks are connected
+        virtual_networks = [n for n in self.network_manager.get_all_networks().values() 
+                           if n.is_connected() and n.hardware and n.hardware.interface_type == 'virtual']
+        if virtual_networks:
             self.status_label.setText("Virtual Network Active")
             self.status_label.setStyleSheet("color: green; font-weight: bold;")
             self.update_virtual_message_table()
@@ -205,17 +208,33 @@ class VirtualCANTab(QWidget):
             self.status_label.setText("Disconnected")
             self.status_label.setStyleSheet("color: red; font-weight: bold;")
             
+    def get_virtual_network(self):
+        """Get the first connected virtual network"""
+        virtual_networks = [n for n in self.network_manager.get_all_networks().values() 
+                           if n.is_connected() and n.hardware and n.hardware.interface_type == 'virtual']
+        if virtual_networks:
+            return virtual_networks[0]
+        return None
+    
+    def get_virtual_network_instance(self):
+        """Get the actual virtual network instance"""
+        virtual_network = self.get_virtual_network()
+        if (virtual_network and hasattr(virtual_network.connection, 'virtual_network') 
+            and virtual_network.connection.virtual_network):
+            return virtual_network.connection.virtual_network
+        return None
+    
     def update_virtual_message_table(self):
         """Update the virtual message table"""
-        virtual_network = self.can_manager.get_virtual_network()
-        if virtual_network:
-            message_list = virtual_network.get_message_list()
+        virtual_network_instance = self.get_virtual_network_instance()
+        if virtual_network_instance:
+            message_list = virtual_network_instance.get_message_list()
             self.message_table.update_virtual_messages(message_list)
             
     def on_message_enabled_changed(self, row, state):
         """Handle message enabled state change"""
-        virtual_network = self.can_manager.get_virtual_network()
-        if virtual_network:
+        virtual_network_instance = self.get_virtual_network_instance()
+        if virtual_network_instance:
             message_list = virtual_network.get_message_list()
             if 0 <= row < len(message_list):
                 msg_id = message_list[row]['id']
@@ -224,8 +243,8 @@ class VirtualCANTab(QWidget):
                 
     def start_all_messages(self):
         """Enable all virtual messages"""
-        virtual_network = self.can_manager.get_virtual_network()
-        if virtual_network:
+        virtual_network_instance = self.get_virtual_network_instance()
+        if virtual_network_instance:
             message_list = virtual_network.get_message_list()
             for msg_info in message_list:
                 virtual_network.set_message_enabled(msg_info['id'], True)
@@ -233,8 +252,8 @@ class VirtualCANTab(QWidget):
             
     def stop_all_messages(self):
         """Disable all virtual messages"""
-        virtual_network = self.can_manager.get_virtual_network()
-        if virtual_network:
+        virtual_network_instance = self.get_virtual_network_instance()
+        if virtual_network_instance:
             message_list = virtual_network.get_message_list()
             for msg_info in message_list:
                 virtual_network.set_message_enabled(msg_info['id'], False)
@@ -242,16 +261,20 @@ class VirtualCANTab(QWidget):
             
     def inject_error_frame(self):
         """Inject an error frame"""
-        if not self.can_manager.is_virtual:
+        virtual_network = self.get_virtual_network()
+        if not virtual_network:
             QMessageBox.warning(self, "Warning", "Virtual CAN network not active")
             return
             
-        self.can_manager.simulate_error_frame()
+        virtual_network_instance = self.get_virtual_network_instance()
+        if virtual_network_instance:
+            virtual_network_instance.simulate_error_frame()
         QMessageBox.information(self, "Info", "Error frame injected")
         
     def inject_manual_message(self):
         """Inject a manual message"""
-        if not self.can_manager.is_virtual:
+        virtual_network = self.get_virtual_network()
+        if not virtual_network:
             QMessageBox.warning(self, "Warning", "Virtual CAN network not active")
             return
             
@@ -271,47 +294,64 @@ class VirtualCANTab(QWidget):
                 data_bytes = b''
                 
             # Inject message
-            self.can_manager.inject_virtual_message(msg_id, data_bytes)
+            virtual_network_instance = self.get_virtual_network_instance()
+            if virtual_network_instance:
+                virtual_network_instance.inject_single_message(msg_id, data_bytes)
             
         except ValueError as e:
             QMessageBox.critical(self, "Error", f"Invalid message format: {str(e)}")
             
     def speed_up_messages(self):
         """Speed up all virtual messages by factor of 2"""
-        virtual_network = self.can_manager.get_virtual_network()
-        if virtual_network:
+        virtual_network_instance = self.get_virtual_network_instance()
+        if virtual_network_instance:
             virtual_network.set_all_message_periods(0.5)  # Divide periods by 2
             self.update_virtual_message_table()
             QMessageBox.information(self, "Info", "Message rates doubled (periods halved)")
             
     def slow_down_messages(self):
         """Slow down all virtual messages by factor of 2"""
-        virtual_network = self.can_manager.get_virtual_network()
-        if virtual_network:
+        virtual_network_instance = self.get_virtual_network_instance()
+        if virtual_network_instance:
             virtual_network.set_all_message_periods(2.0)  # Multiply periods by 2
             self.update_virtual_message_table()
             QMessageBox.information(self, "Info", "Message rates halved (periods doubled)")
             
     def update_display(self):
         """Update display information"""
-        if not self.can_manager.is_virtual:
+        virtual_network = self.get_virtual_network()
+        if not virtual_network:
             return
             
         # Update statistics
-        stats = self.can_manager.get_statistics()
-        self.total_messages_label.setText(f"Total: {stats.get('message_count', 0)}")
+        # Get combined stats from virtual networks
+        virtual_network = self.get_virtual_network()
+        if virtual_network:
+            stats = virtual_network.get_statistics()
+            total_messages = stats.get('message_count', 0)
+            uptime = stats.get('uptime', 1)
+        else:
+            stats = {}
+            total_messages = 0
+            uptime = 1
+            
+        self.total_messages_label.setText(f"Total: {total_messages}")
         
         # Calculate message rate
-        uptime = stats.get('uptime', 1)
         if uptime > 0:
-            rate = stats.get('message_count', 0) / uptime
+            rate = total_messages / uptime
             self.message_rate_label.setText(f"Rate: {rate:.1f} msg/s")
             
         # Count active messages
-        virtual_network = self.can_manager.get_virtual_network()
-        if virtual_network:
-            message_list = virtual_network.get_message_list()
-            active_count = sum(1 for msg in message_list if msg['enabled'])
-            self.active_messages_label.setText(f"Active: {active_count}")
+        virtual_network_instance = self.get_virtual_network_instance()
+        if virtual_network_instance:
+            # Use the virtual network instance method
+            try:
+                message_list = virtual_network_instance.get_message_list()
+                active_count = sum(1 for msg in message_list if msg.get('enabled', False))
+                self.active_messages_label.setText(f"Active: {active_count}")
+            except AttributeError:
+                # Fallback if method doesn't exist
+                self.active_messages_label.setText("Active: N/A")
             
         self.errors_label.setText(f"Errors: {stats.get('error_count', 0)}")
