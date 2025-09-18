@@ -634,7 +634,10 @@ class NetworkManagerTab(QWidget):
         self.update_network_details()
         
         # Update hardware combo availability and connect button state
-        self.update_hardware_combo(self.network_manager.get_available_hardware())
+        # This will now show binding status and disable bound interfaces
+        available_hardware = self.network_manager.get_available_hardware()
+        self.update_hardware_combo(available_hardware)
+        self.update_hardware_table(available_hardware)  # Also update the hardware table
         self.update_connect_button_state()
         
     @pyqtSlot(str, str)
@@ -645,6 +648,7 @@ class NetworkManagerTab(QWidget):
     @pyqtSlot(list)
     def on_hardware_discovered(self, interfaces: List[HardwareInterface]):
         """Handle hardware discovery"""
+        # Update both hardware table and combo with binding status
         self.update_hardware_table(interfaces)
         self.update_hardware_combo(interfaces)
         
@@ -762,32 +766,107 @@ class NetworkManagerTab(QWidget):
                 break
             
     def update_hardware_table(self, interfaces: List[HardwareInterface]):
-        """Update hardware interfaces table"""
+        """Update hardware interfaces table with binding status"""
         self.hardware_table.setRowCount(len(interfaces))
+        bound_interfaces = self.get_bound_interfaces()
         
         for row, interface in enumerate(interfaces):
             self.hardware_table.setItem(row, 0, QTableWidgetItem(interface.interface_type))
             self.hardware_table.setItem(row, 1, QTableWidgetItem(interface.channel))
             self.hardware_table.setItem(row, 2, QTableWidgetItem(interface.name))
             
-            status_item = QTableWidgetItem("Available" if interface.available else "In Use")
-            if interface.available:
+            # Check if this interface is bound to a network
+            hardware_key = f"{interface.interface_type}:{interface.channel}"
+            
+            if hardware_key in bound_interfaces:
+                # Interface is bound to a network
+                bound_network = bound_interfaces[hardware_key]
+                status_text = f"Bound to {bound_network}"
+                status_item = QTableWidgetItem(status_text)
+                status_item.setForeground(QColor("orange"))
+                status_item.setToolTip(f"Currently connected to network: {bound_network}")
+            elif interface.available:
+                # Interface is available for connection
+                status_item = QTableWidgetItem("Available")
                 status_item.setForeground(QColor("green"))
+                status_item.setToolTip("Available for connection")
             else:
+                # Interface exists but not available (hardware issue)
+                status_item = QTableWidgetItem("Unavailable")
                 status_item.setForeground(QColor("red"))
+                status_item.setToolTip("Hardware interface not available")
+                
             self.hardware_table.setItem(row, 3, status_item)
             
+    def get_selected_network(self):
+        """Get the currently selected network"""
+        current_item = self.network_tree.currentItem()
+        if not current_item:
+            return None
+            
+        network_id = current_item.data(0, Qt.ItemDataRole.UserRole)
+        if not network_id:
+            return None
+            
+        return self.network_manager.get_network(network_id)
+    
+    def get_bound_interfaces(self) -> Dict[str, str]:
+        """Get dictionary of bound interface keys to network names"""
+        bound_interfaces = {}
+        
+        for network_id, network in self.network_manager.get_all_networks().items():
+            if network.is_connected() and network.connection and network.connection.hardware:
+                # Get the hardware key from the connection's hardware interface
+                hardware = network.connection.hardware
+                hardware_key = f"{hardware.interface_type}:{hardware.channel}"
+                bound_interfaces[hardware_key] = network.config.name
+                
+        return bound_interfaces
+    
     def update_hardware_combo(self, interfaces: List[HardwareInterface]):
-        """Update hardware selection combo"""
+        """Update hardware selection combo with binding status"""
         current_text = self.hardware_combo.currentText()
+        current_network = self.get_selected_network()
+        current_network_hardware = None
+        
+        # Get the hardware key for the currently selected network if connected
+        if current_network and current_network.is_connected() and current_network.connection and current_network.connection.hardware:
+            hardware = current_network.connection.hardware
+            current_network_hardware = f"{hardware.interface_type}:{hardware.channel}"
+        
+        bound_interfaces = self.get_bound_interfaces()
+        
         self.hardware_combo.clear()
         self.hardware_combo.addItem("Select hardware...", None)
         
         for interface in interfaces:
             if interface.available:
-                text = f"{interface.name} ({interface.interface_type}:{interface.channel})"
-                key = f"{interface.interface_type}:{interface.channel}"
-                self.hardware_combo.addItem(text, key)
+                hardware_key = f"{interface.interface_type}:{interface.channel}"
+                base_text = f"{interface.name} ({interface.interface_type}:{interface.channel})"
+                
+                # Check if this interface is bound to a network
+                if hardware_key in bound_interfaces:
+                    bound_network = bound_interfaces[hardware_key]
+                    
+                    # If this is the currently selected network's interface, show as "Connected"
+                    if hardware_key == current_network_hardware:
+                        text = f"{base_text} - Connected"
+                        self.hardware_combo.addItem(text, hardware_key)
+                    else:
+                        # Interface is bound to another network, show as unavailable
+                        text = f"{base_text} - Bound to {bound_network}"
+                        item_index = self.hardware_combo.count()
+                        self.hardware_combo.addItem(text, None)  # Set data to None to make it unavailable
+                        
+                        # Disable the item
+                        model = self.hardware_combo.model()
+                        item = model.item(item_index)
+                        if item:
+                            item.setEnabled(False)
+                            item.setForeground(QColor("gray"))
+                else:
+                    # Interface is available
+                    self.hardware_combo.addItem(base_text, hardware_key)
                 
         # Restore selection if possible
         index = self.hardware_combo.findText(current_text)
