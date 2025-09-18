@@ -1,0 +1,22 @@
+{
+  "name": "Battery",
+  "timestamp": "2025-09-18 01:10:30",
+  "signals": [
+    {
+      "message_name": "Electrical_System_Data",
+      "signal_name": "BatteryVoltage",
+      "bus_number": 1,
+      "can_id": 768,
+      "y_axis": "left",
+      "color": "#FF6B6B"
+    },
+    {
+      "message_name": "Electrical_System_Data",
+      "signal_name": "BatteryVoltage",
+      "bus_number": 3,
+      "can_id": 768,
+      "y_axis": "left",
+      "color": "#4ECDC4"
+    }
+  ]
+}
