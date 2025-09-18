@@ -55,6 +55,9 @@ class MultiNetworkManager(QObject):
         # Initial hardware discovery
         self.discover_hardware()
         
+        # Auto-reconnect networks after hardware discovery
+        QTimer.singleShot(2000, self.auto_reconnect_networks)  # Wait 2s for hardware discovery
+        
     def discover_hardware(self):
         """Discover available hardware interfaces"""
         try:
@@ -161,6 +164,10 @@ class MultiNetworkManager(QObject):
                 hardware.available = False  # Mark as in use
                 self.global_stats['active_connections'] += 1
                 
+                # Save hardware interface for auto-reconnect
+                network.config.last_hardware_interface = hardware_key
+                self.save_configuration()
+                
             return success
             
         except Exception as e:
@@ -185,6 +192,45 @@ class MultiNetworkManager(QObject):
             self.global_stats['active_connections'] -= 1
             
         return True
+        
+    def auto_reconnect_networks(self):
+        """Automatically reconnect networks to their last used hardware interfaces"""
+        print("🔄 Attempting auto-reconnect to saved hardware interfaces...")
+        
+        reconnected_count = 0
+        
+        for network_id, network in self.networks.items():
+            # Skip if already connected
+            if network.is_connected():
+                continue
+                
+            # Check if network has a saved hardware interface
+            if network.config.last_hardware_interface:
+                hardware_key = network.config.last_hardware_interface
+                
+                # Check if the hardware interface is available
+                if hardware_key in self.hardware_interfaces:
+                    hardware = self.hardware_interfaces[hardware_key]
+                    
+                    # Only try to reconnect if hardware is available
+                    if hardware.available and not self._is_hardware_in_use(hardware_key, network_id):
+                        print(f"🔌 Auto-reconnecting {network.config.name} to {hardware_key}")
+                        
+                        success = self.connect_network(network_id, hardware_key)
+                        if success:
+                            reconnected_count += 1
+                            print(f"✅ Auto-reconnected {network.config.name} to {hardware_key}")
+                        else:
+                            print(f"❌ Failed to auto-reconnect {network.config.name} to {hardware_key}")
+                    else:
+                        print(f"⚠️ Hardware {hardware_key} not available for {network.config.name}")
+                else:
+                    print(f"⚠️ Saved hardware {hardware_key} not found for {network.config.name}")
+                    
+        if reconnected_count > 0:
+            print(f"🎉 Auto-reconnected {reconnected_count} network(s) to saved hardware interfaces")
+        else:
+            print("ℹ️ No networks auto-reconnected (none had saved interfaces or hardware unavailable)")
         
     def disconnect_all_networks(self):
         """Disconnect all networks"""

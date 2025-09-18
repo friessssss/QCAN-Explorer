@@ -305,7 +305,7 @@ class VirtualCANTab(QWidget):
         """Speed up all virtual messages by factor of 2"""
         virtual_network_instance = self.get_virtual_network_instance()
         if virtual_network_instance:
-            virtual_network.set_all_message_periods(0.5)  # Divide periods by 2
+            virtual_network_instance.set_all_message_periods(0.5)  # Divide periods by 2
             self.update_virtual_message_table()
             QMessageBox.information(self, "Info", "Message rates doubled (periods halved)")
             
@@ -313,7 +313,7 @@ class VirtualCANTab(QWidget):
         """Slow down all virtual messages by factor of 2"""
         virtual_network_instance = self.get_virtual_network_instance()
         if virtual_network_instance:
-            virtual_network.set_all_message_periods(2.0)  # Multiply periods by 2
+            virtual_network_instance.set_all_message_periods(2.0)  # Multiply periods by 2
             self.update_virtual_message_table()
             QMessageBox.information(self, "Info", "Message rates halved (periods doubled)")
             

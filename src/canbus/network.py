@@ -74,6 +74,7 @@ class NetworkConfiguration:
     reconnect_delay: int = 5  # seconds
     message_filters: List[Dict] = field(default_factory=list)
     symbol_file_path: str = ""  # Path to SYM file for this network
+    last_hardware_interface: str = ""  # Last connected hardware interface (type:channel)
     
     def to_dict(self) -> Dict:
         """Convert to dictionary for serialization"""
@@ -90,7 +91,8 @@ class NetworkConfiguration:
             'auto_reconnect': self.auto_reconnect,
             'reconnect_delay': self.reconnect_delay,
             'message_filters': self.message_filters,
-            'symbol_file_path': self.symbol_file_path
+            'symbol_file_path': self.symbol_file_path,
+            'last_hardware_interface': self.last_hardware_interface
         }
     
     @classmethod
@@ -110,6 +112,7 @@ class NetworkConfiguration:
         config.reconnect_delay = data.get('reconnect_delay', config.reconnect_delay)
         config.message_filters = data.get('message_filters', config.message_filters)
         config.symbol_file_path = data.get('symbol_file_path', config.symbol_file_path)
+        config.last_hardware_interface = data.get('last_hardware_interface', config.last_hardware_interface)
         return config
 
 
