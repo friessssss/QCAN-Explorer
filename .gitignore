@@ -68,3 +68,6 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+# Network profiles
+network_profiles.json
