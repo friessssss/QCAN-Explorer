@@ -158,9 +158,10 @@ class SignalSelectionDialog(QDialog):
                     data_to_store = (msg_name, variable.name, bus_number, message.can_id)
                     item.setData(0, Qt.ItemDataRole.UserRole, data_to_store)
                     print(f"Storing data for {variable.name}: {data_to_store}")
-                # Debug output for first few signals
-                if len(self.signal_tree.findItems("", Qt.MatchFlag.MatchContains)) < 5:
-                    print(f"Variable: {variable.name} in {msg_name} (ID: 0x{message.can_id:X}) - Data stored: {(msg_name, variable.name, bus_number, message.can_id)}")
+                    
+                    # Debug output for first few signals
+                    if len(self.signal_tree.findItems("", Qt.MatchFlag.MatchContains)) < 5:
+                        print(f"Variable: {variable.name} in {msg_name} (ID: 0x{message.can_id:X}) - Data stored: {(msg_name, variable.name, bus_number, message.can_id)}")
                 
                 # Add signal assignments (Sig= entries)
                 for signal_assignment in message.signals:
@@ -181,6 +182,7 @@ class SignalSelectionDialog(QDialog):
                             data_to_store = (msg_name, signal_name, bus_number, message.can_id)
                             item.setData(0, Qt.ItemDataRole.UserRole, data_to_store)
                             print(f"Storing data for signal {signal_name}: {data_to_store}")
+                            
                             # Debug output for first few signals
                             if len(self.signal_tree.findItems("", Qt.MatchFlag.MatchContains)) < 10:
                                 print(f"Signal: {signal_name} in {msg_name} (ID: 0x{message.can_id:X}) - Data stored: {(msg_name, signal_name, bus_number, message.can_id)}")
@@ -698,15 +700,29 @@ class PlottingTab(QWidget):
                 
     def open_signal_selection(self):
         """Open signal selection dialog"""
+        print(f"\n🔍 Opening signal selection dialog...")
+        
         # Get all available symbol parsers from networks
         networks = self.network_manager.get_all_networks()
         available_parsers = []
         
-        for network in networks.values():
+        print(f"Found {len(networks)} networks:")
+        for network_id, network in networks.items():
+            print(f"  Network {network_id}: {network.config.name} (Bus {network.config.bus_number})")
+            print(f"    Symbol file: {network.config.symbol_file_path}")
+            
             parser = network.get_symbol_parser()
-            if parser and parser.messages:
-                available_parsers.append((network.config.bus_number, parser))
-                print(f"Found symbol parser for Bus {network.config.bus_number}: {len(parser.messages)} messages")
+            if parser:
+                print(f"    Parser loaded: {len(parser.messages)} messages")
+                if parser.messages:
+                    available_parsers.append((network.config.bus_number, parser))
+                    print(f"    ✅ Added to available parsers")
+                else:
+                    print(f"    ❌ Parser has no messages")
+            else:
+                print(f"    ❌ No parser loaded")
+        
+        print(f"Total available parsers: {len(available_parsers)}")
         
         if not available_parsers:
             QMessageBox.warning(self, "Warning", "No symbol files assigned to any network")
@@ -872,7 +888,7 @@ class PlottingTab(QWidget):
             if variable.name == signal_name:
                 return MessageDecoder.decode_signal_value_float(
                     sym_parser, msg.data, variable.start_bit, variable.bit_length,
-                    variable.factor, variable.offset
+                    variable.factor, variable.offset, signal_name
                 )
         
         # Check signal assignments (Sig= entries)
@@ -881,7 +897,7 @@ class PlottingTab(QWidget):
                 signal_def = sym_parser.signals[signal_assignment_name]
                 return MessageDecoder.decode_signal_value_float(
                     sym_parser, msg.data, start_bit, signal_def.bit_length,
-                    signal_def.factor, signal_def.offset
+                    signal_def.factor, signal_def.offset, signal_name
                 )
                         
         return None
@@ -1728,12 +1744,13 @@ class PlottingTab(QWidget):
                         relative_time = msg.timestamp - self.start_time
                         signal_data.add_point(relative_time, value)
                         points_added += 1
-                        if points_added <= 5:  # Debug first few points
-                            print(f"Added point: {signal_key} = {value} at time {relative_time:.3f}s")
+                        # Debug first few points (disabled)
+                        # if points_added <= 5:
+                        #     print(f"Added point: {signal_key} = {value} at time {relative_time:.3f}s")
             
-            # Debug progress every 1000 messages
-            if i % 1000 == 0 and i > 0:
-                print(f"Processed {i} messages, added {points_added} data points")
+            # Debug progress every 1000 messages (disabled)
+            # if i % 1000 == 0 and i > 0:
+            #     print(f"Processed {i} messages, added {points_added} data points")
         
         # Update all plots with trace data
         plots_updated = 0
@@ -1742,12 +1759,13 @@ class PlottingTab(QWidget):
                 times, values = signal_data.get_data_arrays()
                 signal_data.plot_item.setData(times, values)
                 plots_updated += 1
-                print(f"Updated plot for {signal_key}: {len(times)} points")
+                # print(f"Updated plot for {signal_key}: {len(times)} points")
             else:
-                print(f"No plot item or data for {signal_key}: plot_item={signal_data.plot_item is not None}, times={len(signal_data.times) if signal_data.times else 0}")
+                # print(f"No plot item or data for {signal_key}: plot_item={signal_data.plot_item is not None}, times={len(signal_data.times) if signal_data.times else 0}")
+                pass
                 
         self.update_stats()
-        print(f"✅ Updated {plots_updated} plots with trace data (total points added: {points_added})")
+        # print(f"✅ Updated {plots_updated} plots with trace data (total points added: {points_added})")
         
     def plot_signal_from_trace(self, signal_data: SignalData):
         """Plot a specific signal from loaded trace data"""
@@ -1777,7 +1795,7 @@ class PlottingTab(QWidget):
                     signal_data.add_point(relative_time, value)
                     values_decoded += 1
         
-        print(f"Signal {signal_data.signal_name}: Found {matches_found} matching messages, decoded {values_decoded} values")
+        # print(f"Signal {signal_data.signal_name}: Found {matches_found} matching messages, decoded {values_decoded} values")
         
         # Add to plot if not already added
         if not signal_data.plot_item:
@@ -1787,9 +1805,10 @@ class PlottingTab(QWidget):
         if signal_data.plot_item and signal_data.times:
             times, values = signal_data.get_data_arrays()
             signal_data.plot_item.setData(times, values)
-            print(f"Updated plot with {len(times)} points for {signal_data.signal_name}")
+            # print(f"Updated plot with {len(times)} points for {signal_data.signal_name}")
         else:
-            print(f"No plot item or no data for {signal_data.signal_name}: plot_item={signal_data.plot_item is not None}, data_points={len(signal_data.times) if signal_data.times else 0}")
+            # print(f"No plot item or no data for {signal_data.signal_name}: plot_item={signal_data.plot_item is not None}, data_points={len(signal_data.times) if signal_data.times else 0}")
+            pass
 
 
 class SignalManagementDialog(QDialog):

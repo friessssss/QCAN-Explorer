@@ -498,16 +498,25 @@ class CANNetwork(QObject):
         
     def load_symbol_file(self):
         """Load symbol file for this network"""
+        print(f"Loading symbol file for network {self.config.name}: {self.config.symbol_file_path}")
+        
         if self.config.symbol_file_path and os.path.exists(self.config.symbol_file_path):
             try:
                 # Import SymParser when needed to avoid circular imports
                 from utils.sym_parser import SymParser
                 self.sym_parser = SymParser()
                 self.sym_parser.parse_file(self.config.symbol_file_path)
+                print(f"✅ Successfully loaded symbol file: {len(self.sym_parser.messages)} messages")
             except Exception as e:
-                print(f"Warning: Failed to load symbol file for network {self.config.name}: {e}")
+                print(f"❌ Failed to load symbol file for network {self.config.name}: {e}")
+                import traceback
+                traceback.print_exc()
                 self.sym_parser = None
         else:
+            if not self.config.symbol_file_path:
+                print(f"❌ No symbol file path specified for network {self.config.name}")
+            else:
+                print(f"❌ Symbol file does not exist: {self.config.symbol_file_path}")
             self.sym_parser = None
     
     def set_symbol_file(self, file_path: str):

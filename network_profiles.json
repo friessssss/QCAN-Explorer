@@ -12,7 +12,7 @@
     "auto_reconnect": true,
     "reconnect_delay": 5,
     "message_filters": [],
-    "symbol_file_path": "C:/Python/QCAN-Explorer/examples/sym/virtual_can_network.sym",
+    "symbol_file_path": "C:/Users/zachr/Downloads/vehicle-package-LS-AE.1-05_rc-20250815-103721/RELEASE_PACKAGE__TOOLS_1.1.0.0/SymbolFiles/L1_Vehicle-CAN_Beta2.sym",
     "last_hardware_interface": "virtual:virtual0"
   },
   "1b2b3417-a0d9-42bc-ab2e-94d49879b36e": {
@@ -44,7 +44,7 @@
     "auto_reconnect": true,
     "reconnect_delay": 5,
     "message_filters": [],
-    "symbol_file_path": "C:/Users/zachr/Downloads/vehicle-package-LS-AE.1-05_rc-20250815-103721/RELEASE_PACKAGE__TOOLS_1.1.0.0/SymbolFiles/L1_Vehicle-CAN_Beta2.sym",
+    "symbol_file_path": "C:/Users/zachr/Downloads/vehicle-package-LS-AE.1-05_rc-20250815-103721/RELEASE_PACKAGE__TOOLS_1.1.0.0/SymbolFiles/L1_PS-CAN_Beta2.sym",
     "last_hardware_interface": "virtual:virtual2"
   }
 }

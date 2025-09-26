@@ -11,12 +11,12 @@ class MessageDecoder:
     
     @staticmethod
     def extract_bits_can_format(data: bytes, start_bit: int, bit_length: int) -> int:
-        """Extract bits from CAN message data using proper bit ordering"""
+        """Extract bits from CAN message data using little-endian bit ordering"""
         if not data or bit_length <= 0:
             return 0
             
-        # CAN messages use big-endian bit ordering within bytes
-        # Bit 0 is the MSB of byte 0, bit 7 is LSB of byte 0, bit 8 is MSB of byte 1, etc.
+        # CAN messages use little-endian bit ordering within bytes
+        # Bit 0 is the LSB of byte 0, bit 7 is MSB of byte 0, bit 8 is LSB of byte 1, etc.
         
         value = 0
         for i in range(bit_length):
@@ -25,11 +25,11 @@ class MessageDecoder:
                 break
                 
             byte_index = bit_pos // 8
-            bit_index = 7 - (bit_pos % 8)  # MSB is bit 7, LSB is bit 0
+            bit_index = bit_pos % 8  # LSB is bit 0, MSB is bit 7
             
             if byte_index < len(data):
                 bit_value = (data[byte_index] >> bit_index) & 1
-                value |= bit_value << (bit_length - 1 - i)
+                value |= bit_value << i  # Little-endian: first bit is LSB
                 
         return value
     
@@ -65,7 +65,7 @@ class MessageDecoder:
     
     @staticmethod
     def decode_signal_value_float(sym_parser, data: bytes, start_bit: int, bit_length: int, 
-                                factor: float = 1.0, offset: float = 0.0) -> Optional[float]:
+                                factor: float = 1.0, offset: float = 0.0, signal_name: str = "") -> Optional[float]:
         """Decode a signal value from CAN data and return as float (for plotting)"""
         try:
             # Extract bits using proper CAN bit ordering
